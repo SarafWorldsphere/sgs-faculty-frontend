@@ -14,6 +14,7 @@
 
 import { createContext, useContext, useState, useEffect, useCallback } from "react";
 import { loginTeacher, logoutTeacher } from "@/lib/api";
+import { clearActiveClass, getActiveClass, setActiveClass } from "@/lib/activeClass";
 
 const AuthContext = createContext(undefined);
 
@@ -23,10 +24,16 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
+  // Read in the effect below, not during render: localStorage does not exist on
+  // the server, and reading it inline would render one value on the server and
+  // another on the client.
+  const [activeClassId, setActiveClassId] = useState(null);
 
   useEffect(() => {
     async function restoreSession() {
       try {
+        setActiveClassId(getActiveClass());
+
         // 1. Check URL for ?token= param (the login app redirects here with token)
         const params = new URLSearchParams(window.location.search);
         const urlToken = params.get("token");
@@ -37,15 +44,18 @@ export function AuthProvider({ children }) {
           window.history.replaceState({}, "", clean);
         }
 
-        // 2. Check localStorage for an existing token or user profile
+        // 2. Show the cached profile straight away so the header does not flash
         const stored = localStorage.getItem(STORAGE_KEY);
         if (stored) {
           setUser(JSON.parse(stored));
-          return;
+          setIsLoading(false);
         }
 
-        // 3. If a raw JWT exists (set by staging via URL param above or a prior session)
-        //    call /api/v1/auth/me to get the user profile
+        // 3. Then refresh it from /api/v1/auth/me. This is not just for sessions
+        //    with no cached profile: the profile carries the class list and the
+        //    headcount for the selected class, both of which a cached copy can
+        //    have stale — a teacher whose classes changed, or a cache written
+        //    before the class selector existed.
         const token = localStorage.getItem("swais_faculty_token");
         if (token) {
           const { fetchMe } = await import("@/lib/api");
@@ -53,6 +63,9 @@ export function AuthProvider({ children }) {
           if (profile) {
             setUser(profile);
             localStorage.setItem(STORAGE_KEY, JSON.stringify(profile));
+            // fetchMe drops a selection the teacher has lost access to, so read
+            // it back rather than trusting what we had a moment ago.
+            setActiveClassId(getActiveClass());
           }
         }
       } catch {
@@ -102,9 +115,29 @@ export function AuthProvider({ children }) {
     setUser(null);
     setError(null);
     localStorage.removeItem(STORAGE_KEY);
+    // The selection belongs to the teacher who made it — the next person to log
+    // in on this browser must not inherit it.
+    clearActiveClass();
+    setActiveClassId(null);
   }, []);
 
   const clearError = useCallback(() => setError(null), []);
+
+  /**
+   * Switch the class the teacher is working in.
+   *
+   * Every page fetches its own data in a mount effect, and the class is read
+   * from storage at request time, so a reload is what makes the whole app —
+   * dashboard, students, reports, assignments — agree on the new class. Doing
+   * it any other way means threading the selection through four pages' effects
+   * and their derived state, for a change a teacher makes a few times a day.
+   */
+  const switchClass = useCallback((classId) => {
+    if (getActiveClass() === Number(classId)) return;
+    setActiveClass(classId);
+    setActiveClassId(Number(classId));
+    window.location.reload();
+  }, []);
 
   const value = {
     user,
@@ -114,6 +147,14 @@ export function AuthProvider({ children }) {
     login,
     logout,
     clearError,
+    classes: user?.classes ?? [],
+    // Nothing stored means the primary class, which is what the backend uses
+    // when no class_id is sent.
+    activeClassId:
+      activeClassId ??
+      (user?.classes ?? []).find((c) => c.is_primary)?.class_id ??
+      null,
+    switchClass,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

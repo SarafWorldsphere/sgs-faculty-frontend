@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import SubmissionsModal from "@/components/assignments/SubmissionsModal";
+import { withClass } from "@/lib/activeClass";
 import { useAuth } from "@/context/AuthContext";
 import { useNotes } from "@/context/NotesContext";
 import Link from "next/link";
@@ -33,7 +34,7 @@ export default function DashboardPage() {
   useEffect(() => {
     const token = localStorage.getItem("swais_faculty_token");
     if (!token) return;
-    fetch(`${API}/api/v1/assignments`, { headers: { Authorization: `Bearer ${token}` } })
+    fetch(withClass(`${API}/api/v1/assignments`), { headers: { Authorization: `Bearer ${token}` } })
       .then(r => r.ok ? r.json() : Promise.reject())
       .then(d => setAssignments((d.assignments || []).map(a => ({
         id: a.assignment_id,

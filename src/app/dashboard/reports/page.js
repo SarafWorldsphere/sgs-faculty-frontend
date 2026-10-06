@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { withClass } from "@/lib/activeClass";
 
 const API = process.env.NEXT_PUBLIC_API_BASE_URL;
 
@@ -289,7 +290,7 @@ export default function ReportsPage() {
       setIsLoading(false);
       return;
     }
-    fetch(`${API}/api/v1/reports`, { headers: { Authorization: `Bearer ${token}` } })
+    fetch(withClass(`${API}/api/v1/reports`), { headers: { Authorization: `Bearer ${token}` } })
       .then(async (r) => {
         if (!r.ok) {
           const body = await r.json().catch(() => ({}));

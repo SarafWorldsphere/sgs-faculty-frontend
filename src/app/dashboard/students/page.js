@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { todayISO } from "@/lib/dates";
+import { withClass } from "@/lib/activeClass";
 import { sendParentNotification } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 
@@ -274,7 +275,7 @@ function AssignModal({ students: initialStudents, onClose, onSuccess }) {
     setError("");
     const token = localStorage.getItem("swais_faculty_token");
     try {
-      const res = await fetch(`${API}/api/v1/assignments`, {
+      const res = await fetch(withClass(`${API}/api/v1/assignments`), {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({
@@ -757,8 +758,8 @@ export default function StudentsPage() {
       });
 
     Promise.all([
-      safeFetch(`${API}/api/v1/students`),
-      safeFetch(`${API}/api/v1/reports`),
+      safeFetch(withClass(`${API}/api/v1/students`)),
+      safeFetch(withClass(`${API}/api/v1/reports`)),
     ])
       .then(([sd, rd]) => {
         setStudents(sd.students || []);

@@ -2,12 +2,13 @@
 
 import { useState, useEffect } from "react";
 import { useAuth } from "@/context/AuthContext";
+import ClassSelector from "@/components/layout/ClassSelector";
 import { useRouter } from "next/navigation";
 
 const API = process.env.NEXT_PUBLIC_API_BASE_URL;
 
 export default function Header({ onMenuToggle }) {
-  const { user } = useAuth();
+  const { user, classes } = useAuth();
   const router = useRouter();
   const [notices, setNotices] = useState([]);
   // The bell used to show a permanent red dot whenever any announcement
@@ -78,14 +79,21 @@ export default function Header({ onMenuToggle }) {
                 {user.subject}
               </span>
             )}
-            {user?.class && (
+            {/* A teacher with several classes picks one here; everyone else sees
+                the same static chip as before. */}
+            {(classes?.length ?? 0) > 1 ? (
+              <>
+                <span style={{ color: "#CBD5E1" }}>·</span>
+                <ClassSelector />
+              </>
+            ) : user?.class ? (
               <>
                 <span style={{ color: "#CBD5E1" }}>·</span>
                 <span className="text-xs font-medium" style={{ color: "#64748B" }}>
                   Class {user.class}{user?.section ? `-${user.section}` : ""}
                 </span>
               </>
-            )}
+            ) : null}
             {user?.totalStudents != null && (
               <>
                 <span style={{ color: "#CBD5E1" }}>·</span>
