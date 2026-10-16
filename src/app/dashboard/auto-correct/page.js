@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 
 const API = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
 function getToken() {
@@ -36,6 +36,14 @@ export default function AutoCorrectPage() {
   const [questions,     setQuestions]     = useState([]);   // extracted from an uploaded PDF
   const [uploading,     setUploading]     = useState(false);
   const [uploadError,   setUploadError]   = useState("");
+  const [saving,        setSaving]        = useState(false);
+  const [saveError,     setSaveError]     = useState("");
+  const [savedFor,      setSavedFor]      = useState([]);   // student ids kept this sitting
+
+  /* Marking happens one paper at a time, but a class belongs on one test row.
+     The first save creates the assessment and hands back its id; every paper
+     after it is added to the same one. */
+  const assessmentId = useRef(null);
 
   const handleUploadPdf = async (e) => {
     const file = e.target.files?.[0];
@@ -83,6 +91,45 @@ export default function AutoCorrectPage() {
   }, []);
 
   const totalMarks = questions.reduce((s, q) => s + q.maxMarks, 0);
+
+  /**
+   * Keep the result.
+   *
+   * The screen used to mark a paper, show the score and forget it, so nothing
+   * built on sgs_assessments ever saw a corrected paper. This writes it through
+   * the same path as marks entry, which is what makes it show up in the
+   * headmaster's reports alongside marks typed in by hand.
+   *
+   * Only possible with a student chosen: a mark has to belong to somebody.
+   */
+  const handleSave = async () => {
+    if (!selectedStudent || saving) return;
+    setSaving(true);
+    setSaveError("");
+    try {
+      const token = getToken();
+      const res = await fetch(`${API}/api/v1/corrections/save`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          title: `Auto Correct — ${selectedTopic || "paper"}`,
+          assessment_date: new Date().toISOString().slice(0, 10),
+          student_id: Number(selectedStudent),
+          marks_obtained: results.total,
+          max_marks: results.max,
+          assessment_id: assessmentId.current,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.detail || `Error ${res.status}`);
+      assessmentId.current = data.assessment_id;
+      setSavedFor(prev => [...prev, String(selectedStudent)]);
+    } catch (err) {
+      setSaveError(err.message || "Could not save this result.");
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const handleAnswerChange = (qId, val) => {
     setAnswers(prev => ({ ...prev, [qId]: val }));
@@ -140,6 +187,7 @@ export default function AutoCorrectPage() {
 
   const handleReset = () => {
     setStep(1);
+    setSaveError("");
     setAnswers({});
     setResults(null);
   };
@@ -377,6 +425,46 @@ export default function AutoCorrectPage() {
               <div className="h-full rounded-full transition-all duration-700"
                 style={{ width: `${results.percentage}%`, background: "linear-gradient(90deg,#6366F1,#10B981)" }} />
             </div>
+          </div>
+
+          {/* Keeping the result. Only a named student can have a mark, so the
+              class-wide mode explains itself rather than offering a dead button. */}
+          <div className="bg-white rounded-2xl p-5" style={{ border: "1px solid rgba(99,102,241,0.1)" }}>
+            {!selectedStudent ? (
+              <p className="text-sm" style={{ color: "#64748B" }}>
+                Pick a student on the first step to save this result against them.
+                Without one it can be read here but not recorded.
+              </p>
+            ) : savedFor.includes(String(selectedStudent)) ? (
+              <div className="flex items-center gap-2">
+                <span className="w-6 h-6 rounded-full flex items-center justify-center text-white text-xs"
+                  style={{ background: "#10B981" }}>✓</span>
+                <p className="text-sm font-semibold" style={{ color: "#059669" }}>
+                  Saved. It will show in the marks reports for this class.
+                </p>
+              </div>
+            ) : (
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <div style={{ minWidth: 0 }}>
+                  <p className="text-sm font-semibold" style={{ color: "#0F172A" }}>
+                    Save {results.total} / {results.max} for this student
+                  </p>
+                  <p className="text-xs mt-0.5" style={{ color: "#94A3B8" }}>
+                    {assessmentId.current
+                      ? "Added to the test you started this sitting."
+                      : "Creates the test; the next student joins the same one."}
+                  </p>
+                </div>
+                <button onClick={handleSave} disabled={saving}
+                  className="px-4 py-2.5 rounded-xl text-sm font-bold text-white cursor-pointer ai-gradient disabled:opacity-60"
+                  style={{ boxShadow: "0 4px 12px rgba(99,102,241,0.3)" }}>
+                  {saving ? "Saving…" : "Save result"}
+                </button>
+              </div>
+            )}
+            {saveError && (
+              <p className="text-xs mt-3" style={{ color: "#DC2626" }}>{saveError}</p>
+            )}
           </div>
 
           {/* Per-question breakdown */}

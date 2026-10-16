@@ -170,7 +170,9 @@ export async function logoutTeacher() {
  * Fetch all notes for the current teacher — GET /api/v1/notes
  */
 export async function fetchNotes() {
-  const data = await request("/api/v1/notes");
+  // Carries the selected class, so a teacher with two classes sees the notes
+  // for the one they are working on rather than both sets mixed together.
+  const data = await request(withClass("/api/v1/notes"));
   return data.notes; // array of NoteOut
 }
 
@@ -178,7 +180,7 @@ export async function fetchNotes() {
  * Create a new note — POST /api/v1/notes
  */
 export async function createNote(noteData) {
-  return request("/api/v1/notes", {
+  return request(withClass("/api/v1/notes"), {
     method: "POST",
     body: JSON.stringify({
       title: noteData.title,
