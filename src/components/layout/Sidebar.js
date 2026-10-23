@@ -4,6 +4,7 @@ import { useState } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useSchool, schoolLogo } from "@saraswati/tenant-kit";
 import { useAuth } from "@/context/AuthContext";
 import { LOGIN_URL } from "@/lib/api";
 
@@ -118,6 +119,7 @@ const navItems = [
 
 export default function Sidebar({ isOpen, onClose }) {
   const pathname = usePathname();
+  const school = useSchool();
   const { logout } = useAuth();
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
@@ -138,17 +140,17 @@ export default function Sidebar({ isOpen, onClose }) {
         className={`fixed lg:sticky top-0 left-0 z-50 h-screen w-64 flex flex-col transition-transform duration-300 ease-in-out dot-grid ${
           isOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
         }`}
-        style={{ background: "#0F172A" }}
+        style={{ background: "var(--school-primary)" }}
       >
-        {/* Brand */}
+        {/* Brand — the school's own, read from its config rather than bundled */}
         <div className="flex items-center gap-3 px-5 py-5" style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
           <img
-            src={`${process.env.NODE_ENV === "production" ? "/faculty" : ""}/sgs-logo.png`}
-            alt="SGS Senior Secondary School"
+            src={schoolLogo(school.tenantId)}
+            alt=""
             className="w-10 h-10 rounded-full object-cover shrink-0"
           />
           <div className="flex-1 min-w-0">
-            <h1 className="text-[15px] font-bold leading-tight tracking-tight ai-gradient-text">SGS Portal</h1>
+            <h1 className="text-[15px] font-bold leading-tight tracking-tight ai-gradient-text">{school.shortName} Portal</h1>
             <p className="text-[10px] leading-tight mt-0.5" style={{ color: "#94A3B8" }}>AI-Powered Faculty Portal</p>
           </div>
           <button onClick={onClose} className="p-1.5 rounded-lg lg:hidden cursor-pointer" style={{ color: "#475569" }} aria-label="Close sidebar">
@@ -182,7 +184,7 @@ export default function Sidebar({ isOpen, onClose }) {
                 onClick={onClose}
                 className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 group"
                 style={isActive
-                  ? { background: "rgba(99,102,241,0.15)", color: "#A5B4FC", boxShadow: "inset 3px 0 0 #6366F1" }
+                  ? { background: "rgba(99,102,241,0.15)", color: "#A5B4FC", boxShadow: "inset 3px 0 0 var(--school-accent)" }
                   : { color: "#64748B" }
                 }
                 onMouseEnter={e => { if (!isActive) { e.currentTarget.style.background = "rgba(255,255,255,0.05)"; e.currentTarget.style.color = "#CBD5E1"; } }}
@@ -192,7 +194,7 @@ export default function Sidebar({ isOpen, onClose }) {
                 <span>{item.label}</span>
                 {item.badge && (
                   <span className="ml-auto px-1.5 py-0.5 rounded-md text-[9px] font-bold"
-                    style={{ background: "linear-gradient(135deg,#6366F1,#8B5CF6)", color: "white" }}>
+                    style={{ background: "linear-gradient(135deg,var(--school-accent),#8B5CF6)", color: "white" }}>
                     {item.badge}
                   </span>
                 )}
@@ -254,12 +256,12 @@ export default function Sidebar({ isOpen, onClose }) {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
                 </svg>
               </div>
-              <h2 id="sidebar-logout-title" className="text-base font-bold" style={{ color: "#0F172A", fontFamily: "var(--font-space-grotesk)" }}>
+              <h2 id="sidebar-logout-title" className="text-base font-bold" style={{ color: "var(--school-primary)", fontFamily: "var(--font-space-grotesk)" }}>
                 Sign out?
               </h2>
             </div>
             <p className="text-sm mb-5" style={{ color: "#64748B" }}>
-              You will be signed out and taken back to the SGS Portal login page.
+              You will be signed out and taken back to the login page.
             </p>
             <div className="flex justify-end gap-2">
               <button
