@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import ChapterPicker from "@/components/chapters/ChapterPicker";
+import ConfigStep from "@/components/autotest/ConfigStep";
+import { testTypeById } from "@/lib/testBlueprints";
 import Modal from "@/components/ui/Modal";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import { todayISO } from "@/lib/dates";
@@ -19,133 +20,6 @@ import {
 const API = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 function getToken() {
   return typeof window !== "undefined" ? localStorage.getItem("swais_faculty_token") : null;
-}
-
-const DIFFICULTIES = ["Easy", "Medium", "Hard"];
-const QTYPES = ["MCQ", "True/False", "Short Answer"];
-
-/* ─── Configure Step ──────────────────────────────────────── */
-function ConfigStep({ onGenerate }) {
-  const [chapterId,   setChapterId]   = useState("");
-  const [chapterName, setChapterName] = useState("");
-  const [difficulty,  setDifficulty]  = useState("Medium");
-  const [qtype,       setQtype]       = useState("");
-  const [totalMarks,  setTotalMarks]  = useState(50);
-
-  return (
-    <div className="bg-white rounded-2xl p-8 shadow-sm max-w-xl mx-auto"
-      style={{ border: "1px solid rgba(99,102,241,0.1)" }}>
-
-      <div className="flex items-center gap-3 mb-6">
-        <div className="w-12 h-12 rounded-xl ai-gradient flex items-center justify-center pulse-glow">
-          <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-              d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-          </svg>
-        </div>
-        <div>
-          <h2 className="text-lg font-bold" style={{ color: "#0F172A", fontFamily: "var(--font-space-grotesk)" }}>
-            Configure Your Test
-          </h2>
-          <p className="text-xs" style={{ color: "#94A3B8" }}>Select chapter, difficulty, and total marks</p>
-        </div>
-      </div>
-
-      <div className="space-y-5">
-
-        {/* Chapter */}
-        <div>
-          <label className="block text-sm font-semibold mb-2" style={{ color: "#374151" }}>📖 Class / Subject / Chapter</label>
-          <ChapterPicker onChapterChange={(id, name) => { setChapterId(id); setChapterName(name); }} />
-        </div>
-
-        {/* Difficulty */}
-        <div>
-          <label className="block text-sm font-semibold mb-2" style={{ color: "#374151" }}>🎯 Difficulty</label>
-          <div className="grid grid-cols-3 gap-2">
-            {DIFFICULTIES.map(d => {
-              const colors = { Easy: "#10B981", Medium: "#F59E0B", Hard: "#EF4444" };
-              const bgs    = { Easy: "#ECFDF5", Medium: "#FFFBEB", Hard: "#FEF2F2" };
-              const active = difficulty === d;
-              return (
-                <button key={d} onClick={() => setDifficulty(d)}
-                  className="py-2.5 px-3 rounded-xl text-xs font-semibold text-center transition-all cursor-pointer"
-                  style={active
-                    ? { background: bgs[d], color: colors[d], border: `1.5px solid ${colors[d]}`, boxShadow: `0 4px 12px ${colors[d]}33` }
-                    : { background: "#F8FAFC", color: "#64748B", border: "1.5px solid #E2E8F0" }}>
-                  {d}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Question Type (optional) */}
-        <div>
-          <label className="block text-sm font-semibold mb-1" style={{ color: "#374151" }}>
-            🧩 Question Type
-            <span className="ml-2 text-xs font-normal" style={{ color: "#94A3B8" }}>(optional)</span>
-          </label>
-          <div className="grid grid-cols-4 gap-2">
-            {QTYPES.map(t => (
-              <button key={t} onClick={() => setQtype(prev => prev === t ? "" : t)}
-                className="py-2.5 px-2 rounded-xl text-xs font-semibold text-center transition-all cursor-pointer"
-                style={qtype === t
-                  ? { background: "linear-gradient(135deg,#6366F1,#8B5CF6)", color: "#fff", boxShadow: "0 4px 12px rgba(99,102,241,0.3)" }
-                  : { background: "#F8FAFC", color: "#64748B", border: "1.5px solid #E2E8F0" }}
-                  >
-                {t}
-              </button>
-            ))}
-            <button onClick={() => setQtype("")}
-              className="py-2.5 px-2 rounded-xl text-xs font-semibold text-center transition-all cursor-pointer"
-              style={qtype === ""
-                ? { background: "linear-gradient(135deg,#6366F1,#8B5CF6)", color: "#fff", boxShadow: "0 4px 12px rgba(99,102,241,0.3)" }
-                : { background: "#F8FAFC", color: "#64748B", border: "1.5px solid #E2E8F0" }}>
-              All
-            </button>
-          </div>
-        </div>
-
-        {/* Total Marks slider */}
-        <div>
-          <label className="block text-sm font-semibold mb-2 flex items-center justify-between" style={{ color: "#374151" }}>
-            <span>🔢 Total Marks</span>
-            <span className="font-bold" style={{ color: "#6366F1" }}>{totalMarks}</span>
-          </label>
-          <input type="range" min={10} max={100} step={10} value={totalMarks}
-            onChange={e => setTotalMarks(Number(e.target.value))}
-            className="w-full cursor-pointer"
-            style={{ accentColor: "#6366F1" }} />
-          <div className="flex justify-between text-[10px] mt-1" style={{ color: "#94A3B8" }}>
-            <span>10</span><span>100</span>
-          </div>
-        </div>
-
-        {/* Preview info */}
-        <div className="p-3.5 rounded-xl flex items-start gap-2.5"
-          style={{ background: "linear-gradient(135deg,#EEF2FF,#F5F3FF)", border: "1px solid #DDD6FE" }}>
-          <span className="text-sm mt-0.5">⚡</span>
-          <div>
-            <p className="text-xs font-bold" style={{ color: "#6366F1" }}>AI will generate:</p>
-            <p className="text-xs mt-0.5" style={{ color: "#64748B" }}>
-              <span className="font-semibold">{difficulty}</span> · {totalMarks} marks ·{" "}
-              <span className="font-semibold">{qtype || "All question types"}</span> ·{" "}
-              {chapterName || "Selected chapter"}
-            </p>
-          </div>
-        </div>
-
-        <button
-          onClick={() => onGenerate({ chapterId, chapterName, difficulty, totalMarks, qtype })}
-          disabled={!chapterId}
-          className="w-full py-3 rounded-xl text-sm font-bold text-white transition-all cursor-pointer ai-gradient hover:opacity-90 active:scale-[0.98] disabled:opacity-50"
-          style={{ boxShadow: "0 4px 16px rgba(99,102,241,0.35)" }}>
-          ✨ Generate Test
-        </button>
-      </div>
-    </div>
-  );
 }
 
 /* ─── Generating Step ─────────────────────────────────────── */
@@ -170,7 +44,7 @@ function GeneratingStep({ config }) {
         AI is generating your test…
       </h2>
       <p className="text-xs mb-8" style={{ color: "#94A3B8" }}>
-        {config.difficulty} · {config.totalMarks} marks · {config.chapterName}
+        {config.totalMarks} marks · {config.chapterName}
       </p>
       <div className="space-y-2.5 text-left">
         {steps.map((s, i) => (
@@ -398,7 +272,9 @@ function AssignDialog({ paper, onClose }) {
 
 /* ─── Preview Step ────────────────────────────────────────── */
 function PreviewStep({ config, questions, rawResponse, onReset, onPrint, onSaved }) {
-  const [title, setTitle]       = useState(`${config?.chapterName || "Chapter"} — ${config?.difficulty || ""} test`.trim());
+  const [title, setTitle]       = useState(
+    `${config?.examNo || testTypeById(config?.testType).label} — ${config?.chapterName || "Chapter"}`.trim()
+  );
   const [saving, setSaving]     = useState(false);
   const [saved, setSaved]       = useState(null);   // the stored paper, once saved
   const [error, setError]       = useState("");
@@ -409,8 +285,9 @@ function PreviewStep({ config, questions, rawResponse, onReset, onPrint, onSaved
 
   // What Print and Assign work from, whether or not it's been saved yet.
   const asPaper = () => ({
-    title, subject: config?.subject, difficulty: config?.difficulty,
-    total_marks: config?.totalMarks, question_type: config?.qtype || null,
+    title, subject: config?.subject,
+    difficulty: null,
+    total_marks: config?.totalMarks, question_type: null,
     paper_text: paperText, questions: hasStructured ? questions : null,
   });
 
@@ -423,9 +300,9 @@ function PreviewStep({ config, questions, rawResponse, onReset, onPrint, onSaved
         title: title.trim(),
         chapterId: config?.chapterId ?? null,
         subject: config?.subject ?? null,
-        difficulty: config?.difficulty ?? null,
+        difficulty: null,
         totalMarks: config?.totalMarks ?? null,
-        questionType: config?.qtype || null,
+        questionType: null,
         paperText,
         questions: hasStructured ? questions : null,
       });
@@ -445,9 +322,10 @@ function PreviewStep({ config, questions, rawResponse, onReset, onPrint, onSaved
       {/* Header: title (editable until saved) + actions */}
       <div className="bg-white rounded-2xl p-5" style={{ border: "1px solid rgba(99,102,241,0.1)" }}>
         <div className="flex items-center gap-2 mb-2 flex-wrap">
-          <span className="px-2 py-0.5 rounded-full text-xs font-semibold" style={{ background: "#EEF2FF", color: "#6366F1" }}>{config?.difficulty}</span>
+          <span className="px-2 py-0.5 rounded-full text-xs font-semibold" style={{ background: "#EEF2FF", color: "#6366F1" }}>
+            {config?.examNo || testTypeById(config?.testType).label}
+          </span>
           <span className="text-xs font-medium" style={{ color: "#64748B" }}>· {config?.totalMarks} marks</span>
-          {config?.qtype && <span className="text-xs font-medium" style={{ color: "#64748B" }}>· {config.qtype}</span>}
           {hasStructured && <span className="text-xs font-medium" style={{ color: "#64748B" }}>· {questions.length} questions</span>}
         </div>
         {saved ? (
@@ -601,9 +479,15 @@ export default function AutoTestPage() {
       const token = getToken();
       const body = {
         chapterId:  cfg.chapterId,
-        difficulty: cfg.difficulty,
         totalMarks: cfg.totalMarks,
-        questionType: cfg.qtype || null,   // null / omitted = all question types
+        // The new shape. The service ignores what it does not yet read, so the
+        // screen can ship before the generator is rebuilt around blueprints.
+        testType:       cfg.testType,
+        examNo:         cfg.examNo,
+        difficultyMix:  cfg.difficultyMix,
+        blueprint:      cfg.blueprint,
+        negativeMarking: cfg.negativeMarking,
+        minutes:        cfg.minutes,
       };
 
       const res = await fetch(`${API}/api/v1/question-papers/generate`, {
