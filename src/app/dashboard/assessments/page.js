@@ -65,10 +65,19 @@ function AvgPill({ avg, max }) {
 }
 
 /* ── Result Drawer (with star, at-risk, distribution) ─────────── */
-function ResultDrawer({ assessment, onClose }) {
+function ResultDrawer({ assessment, onClose, onSaved }) {
   const [detail, setDetail]   = useState(null);
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState(null);
+
+  // Correcting marks after they are saved. The backend has always accepted
+  // this (PUT /assessments/{id}/marks, and it takes only the students that
+  // changed) — the drawer was read-only, so a mis-keyed mark could not be
+  // fixed from the app at all.
+  const [editing,   setEditing]   = useState(false);
+  const [drafts,    setDrafts]    = useState({});   // student_id -> { marks, absent }
+  const [saving,    setSaving]    = useState(false);
+  const [saveError, setSaveError] = useState(null);
 
   useEffect(() => {
     const token = localStorage.getItem("swais_faculty_token");
@@ -114,6 +123,99 @@ function ResultDrawer({ assessment, onClose }) {
     };
   }, [detail]);
 
+  const maxMarks = Number(detail?.max_marks ?? assessment.max_marks);
+
+  function startEdit() {
+    const seed = {};
+    (detail?.results || []).forEach((r) => {
+      seed[r.student_id] = {
+        marks:  r.marks_obtained === null || r.marks_obtained === undefined ? "" : String(r.marks_obtained),
+        absent: !!r.is_absent,
+      };
+    });
+    setDrafts(seed);
+    setSaveError(null);
+    setEditing(true);
+  }
+
+  function cancelEdit() {
+    setEditing(false);
+    setDrafts({});
+    setSaveError(null);
+  }
+
+  function setDraft(studentId, patch) {
+    setDrafts((d) => ({ ...d, [studentId]: { ...d[studentId], ...patch } }));
+  }
+
+  // Only the rows the teacher actually touched are sent. The endpoint updates
+  // exactly what it receives, so sending the whole class would rewrite rows
+  // nobody edited and move their updated_at for no reason.
+  const changed = useMemo(() => {
+    if (!editing) return [];
+    return (detail?.results || []).filter((r) => {
+      const d = drafts[r.student_id];
+      if (!d) return false;
+      const was = r.marks_obtained === null || r.marks_obtained === undefined ? "" : String(r.marks_obtained);
+      return d.absent !== !!r.is_absent || (d.marks ?? "") !== was;
+    });
+  }, [editing, drafts, detail]);
+
+  // Mirrors the backend's own rule, so a teacher sees the problem before the
+  // request rather than as a 400.
+  const invalid = useMemo(() => {
+    if (!editing) return [];
+    return Object.entries(drafts).filter(([, d]) => {
+      if (d.absent) return false;
+      if (d.marks === "" || d.marks === undefined) return false;
+      const v = parseFloat(d.marks);
+      return Number.isNaN(v) || v < 0 || v > maxMarks;
+    });
+  }, [editing, drafts, maxMarks]);
+
+  async function saveEdits() {
+    if (!changed.length || invalid.length) return;
+    setSaving(true);
+    setSaveError(null);
+
+    const token = localStorage.getItem("swais_faculty_token");
+    const marks = changed.map((r) => {
+      const d = drafts[r.student_id];
+      return {
+        student_id:     r.student_id,
+        is_absent:      !!d.absent,
+        marks_obtained: d.absent || d.marks === "" || d.marks === undefined ? null : parseFloat(d.marks),
+      };
+    });
+
+    try {
+      const res = await fetch(`${API}/api/v1/assessments/${assessment.assessment_id}/marks`, {
+        method:  "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ marks }),
+      });
+      if (!res.ok) {
+        const b = await res.json().catch(() => ({}));
+        throw new Error(b.detail || `Could not save (HTTP ${res.status})`);
+      }
+      // The response is the whole assessment with recomputed average and
+      // submitted count, so the drawer and the card behind it both refresh
+      // from one source rather than guessing at the new totals.
+      const updated = await res.json();
+      setDetail(updated);
+      setEditing(false);
+      setDrafts({});
+      onSaved?.(updated);
+    } catch (err) {
+      setSaveError(err?.message || "Could not save the corrections.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex">
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
@@ -149,12 +251,14 @@ function ResultDrawer({ assessment, onClose }) {
             </button>
           </div>
 
-          {/* Meta pills */}
+          {/* Meta pills — read from `detail` once it has loaded, so a
+              correction updates the submitted count and average in place
+              instead of showing the figures the list was opened with. */}
           <div className="flex flex-wrap gap-2 mt-3">
             {[
-              { label: "Max Marks", value: assessment.max_marks },
-              { label: "Submitted", value: `${assessment.submitted}/${assessment.total_students}` },
-              { label: "Avg Score", value: assessment.class_average ?? "—", highlight: true },
+              { label: "Max Marks", value: maxMarks },
+              { label: "Submitted", value: `${(detail ?? assessment).submitted}/${(detail ?? assessment).total_students}` },
+              { label: "Avg Score", value: (detail ?? assessment).class_average ?? "—", highlight: true },
             ].map(m => (
               <div key={m.label} className="px-3 py-1.5 rounded-lg text-xs"
                 style={{
@@ -167,6 +271,29 @@ function ResultDrawer({ assessment, onClose }) {
               </div>
             ))}
           </div>
+
+          {/* Correct marks — only once there is something to correct. */}
+          {!loading && (detail?.results?.length ?? 0) > 0 && (
+            <div className="mt-3">
+              {editing ? (
+                <button onClick={cancelEdit} disabled={saving}
+                  className="text-xs font-semibold px-3 py-1.5 rounded-lg cursor-pointer transition-all"
+                  style={{ background: "#F8FAFC", color: "#64748B", border: "1px solid #E2E8F0", opacity: saving ? 0.6 : 1 }}>
+                  Cancel
+                </button>
+              ) : (
+                <button onClick={startEdit}
+                  className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg cursor-pointer transition-all"
+                  style={{ background: "#EEF2FF", color: "#6366F1", border: "1px solid #C7D2FE" }}>
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                      d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                  </svg>
+                  Correct marks
+                </button>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Body */}
@@ -242,10 +369,23 @@ function ResultDrawer({ assessment, onClose }) {
                 </thead>
                 <tbody>
                   {detail?.results?.map((r) => {
-                    const grade = getGrade(r.percentage);
+                    const d = editing ? drafts[r.student_id] : null;
+
+                    // While editing, the percentage and grade follow what the
+                    // teacher has typed, so they can see the effect of a
+                    // correction before saving it.
+                    const livePct = d
+                      ? (d.absent || d.marks === "" || d.marks === undefined || Number.isNaN(parseFloat(d.marks))
+                          ? null
+                          : Math.round((parseFloat(d.marks) / maxMarks) * 10000) / 100)
+                      : r.percentage;
+
+                    const grade = getGrade(livePct);
                     const gs = GRADE_STYLE[grade];
-                    const isStar    = star?.result_id   === r.result_id;
-                    const isAtRisk  = atRisk?.result_id === r.result_id && !isStar;
+                    const isStar    = !editing && star?.result_id   === r.result_id;
+                    const isAtRisk  = !editing && atRisk?.result_id === r.result_id && !isStar;
+                    const bad = d && !d.absent && d.marks !== "" && d.marks !== undefined &&
+                                (Number.isNaN(parseFloat(d.marks)) || parseFloat(d.marks) < 0 || parseFloat(d.marks) > maxMarks);
                     return (
                       <tr key={r.result_id}
                         style={{
@@ -263,12 +403,38 @@ function ResultDrawer({ assessment, onClose }) {
                           </span>
                         </td>
                         <td className="px-4 py-2.5 text-right">
-                          {r.marks_obtained !== null
-                            ? <span className="font-semibold" style={{ color: "#0F172A" }}>{r.marks_obtained}</span>
-                            : <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: "#FEF2F2", color: "#EF4444" }}>Absent</span>}
+                          {editing ? (
+                            <div className="flex items-center justify-end gap-2">
+                              <input
+                                type="number" min="0" max={maxMarks} step="0.01"
+                                value={d?.marks ?? ""}
+                                disabled={d?.absent || saving}
+                                onChange={(ev) => setDraft(r.student_id, { marks: ev.target.value })}
+                                aria-label={`Marks for ${r.student_name}`}
+                                className="w-20 px-2 py-1 rounded-lg text-right text-sm font-semibold"
+                                style={{
+                                  background: d?.absent ? "#F8FAFC" : "#FFFFFF",
+                                  color: "#0F172A",
+                                  border: "1px solid",
+                                  borderColor: bad ? "rgba(239,68,68,0.6)" : "#E2E8F0",
+                                }} />
+                              <label className="inline-flex items-center gap-1 text-[10px] font-semibold cursor-pointer"
+                                style={{ color: d?.absent ? "#EF4444" : "#94A3B8" }}>
+                                <input type="checkbox" checked={!!d?.absent} disabled={saving}
+                                  onChange={(ev) => setDraft(r.student_id, { absent: ev.target.checked })} />
+                                Abs
+                              </label>
+                            </div>
+                          ) : r.is_absent ? (
+                            <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: "#FEF2F2", color: "#EF4444" }}>Absent</span>
+                          ) : r.marks_obtained !== null && r.marks_obtained !== undefined ? (
+                            <span className="font-semibold" style={{ color: "#0F172A" }}>{r.marks_obtained}</span>
+                          ) : (
+                            <span className="text-xs" style={{ color: "#94A3B8" }}>Not entered</span>
+                          )}
                         </td>
                         <td className="px-4 py-2.5 text-right text-xs" style={{ color: "#64748B" }}>
-                          {r.percentage !== null ? `${r.percentage}%` : "—"}
+                          {livePct !== null && livePct !== undefined ? `${livePct}%` : "—"}
                         </td>
                         <td className="px-4 py-2.5 text-center">
                           <span className="px-2 py-0.5 rounded-full text-xs font-bold"
@@ -282,6 +448,38 @@ function ResultDrawer({ assessment, onClose }) {
             </>
           )}
         </div>
+
+        {/* Save bar — only while correcting. Outside the scrolling body so it
+            stays reachable with a long class list. */}
+        {editing && (
+          <div className="px-5 py-4" style={{ borderTop: "1px solid rgba(99,102,241,0.12)", background: "#FFFFFF" }}>
+            {saveError && (
+              <p className="text-xs mb-2" style={{ color: "#EF4444" }}>{saveError}</p>
+            )}
+            {invalid.length > 0 && (
+              <p className="text-xs mb-2" style={{ color: "#EF4444" }}>
+                {invalid.length} {invalid.length === 1 ? "mark is" : "marks are"} outside 0 to {maxMarks}.
+              </p>
+            )}
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-xs" style={{ color: "#94A3B8" }}>
+                {changed.length === 0
+                  ? "No changes yet"
+                  : `${changed.length} ${changed.length === 1 ? "student" : "students"} changed`}
+              </span>
+              <button onClick={saveEdits}
+                disabled={saving || !changed.length || invalid.length > 0}
+                className="text-sm font-semibold px-4 py-2 rounded-xl cursor-pointer transition-all"
+                style={{
+                  background: (!changed.length || invalid.length) ? "#E2E8F0" : "#6366F1",
+                  color:      (!changed.length || invalid.length) ? "#94A3B8" : "#FFFFFF",
+                  cursor:     (saving || !changed.length || invalid.length) ? "not-allowed" : "pointer",
+                }}>
+                {saving ? "Saving…" : "Save corrections"}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       <style>{`
@@ -565,7 +763,23 @@ export default function AssessmentsPage() {
         )}
       </div>
 
-      {selected && <ResultDrawer assessment={selected} onClose={() => setSelected(null)} />}
+      {selected && (
+        <ResultDrawer
+          assessment={selected}
+          onClose={() => setSelected(null)}
+          // A correction changes the submitted count and the class average, so
+          // the card behind the drawer is patched from the same response
+          // rather than left showing the pre-correction figures until reload.
+          onSaved={(updated) => {
+            setAssessments((list) =>
+              list.map((a) =>
+                a.assessment_id === updated.assessment_id ? { ...a, ...updated } : a
+              )
+            );
+            setSelected((s) => (s ? { ...s, ...updated } : s));
+          }}
+        />
+      )}
     </>
   );
 }
