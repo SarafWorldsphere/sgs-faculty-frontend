@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useRef } from "react";
 import { todayISO } from "@/lib/dates";
+import { withClass } from "@/lib/activeClass";
+import { sendParentNotification } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 
 const API = process.env.NEXT_PUBLIC_API_BASE_URL;
@@ -63,9 +65,27 @@ function NotifyModal({ student, onClose }) {
     { value: "general",      label: "📢 General Notice" },
   ];
 
-  const handleSend = () => {
-    if (!message.trim()) return;
-    setSent(true);
+  const [sending, setSending] = useState(false);
+  const [error,   setError]   = useState("");
+
+  // This used to be `setSent(true)` and nothing else — the modal claimed the
+  // parent had been notified while storing nothing and telling no one.
+  const handleSend = async () => {
+    if (!message.trim() || sending) return;
+    setSending(true);
+    setError("");
+    try {
+      await sendParentNotification({
+        studentId: student.student_id,
+        type: msgType,
+        message: message.trim(),
+      });
+      setSent(true);
+    } catch (err) {
+      setError(err.message || "Could not send. Please try again.");
+    } finally {
+      setSending(false);
+    }
   };
 
   return (
@@ -177,15 +197,18 @@ function NotifyModal({ student, onClose }) {
                   Cancel
                 </button>
                 <button onClick={handleSend}
-                  disabled={!message.trim()}
-                  className="flex-1 py-2.5 rounded-xl text-sm font-semibold cursor-pointer transition-all"
+                  disabled={!message.trim() || sending}
+                  className="flex-1 py-2.5 rounded-xl text-sm font-semibold cursor-pointer transition-all disabled:cursor-not-allowed"
                   style={{
-                    background: message.trim() ? "linear-gradient(135deg,#6366F1,#8B5CF6)" : "#E2E8F0",
-                    color: message.trim() ? "white" : "#94A3B8",
+                    background: message.trim() && !sending ? "linear-gradient(135deg,#6366F1,#8B5CF6)" : "#E2E8F0",
+                    color: message.trim() && !sending ? "white" : "#94A3B8",
                   }}>
-                  Send Notification
+                  {sending ? "Sending…" : "Send Notification"}
                 </button>
               </div>
+              {error && (
+                <p className="text-xs mt-2 text-center" style={{ color: "#DC2626" }}>{error}</p>
+              )}
             </>
           )}
         </div>
@@ -252,7 +275,7 @@ function AssignModal({ students: initialStudents, onClose, onSuccess }) {
     setError("");
     const token = localStorage.getItem("swais_faculty_token");
     try {
-      const res = await fetch(`${API}/api/v1/assignments`, {
+      const res = await fetch(withClass(`${API}/api/v1/assignments`), {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({
@@ -735,8 +758,8 @@ export default function StudentsPage() {
       });
 
     Promise.all([
-      safeFetch(`${API}/api/v1/students`),
-      safeFetch(`${API}/api/v1/reports`),
+      safeFetch(withClass(`${API}/api/v1/students`)),
+      safeFetch(withClass(`${API}/api/v1/reports`)),
     ])
       .then(([sd, rd]) => {
         setStudents(sd.students || []);

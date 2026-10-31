@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { withClass } from "@/lib/activeClass";
 
 const API = process.env.NEXT_PUBLIC_API_BASE_URL;
 
@@ -53,10 +54,13 @@ function PercentBar({ value }) {
 }
 
 /* ── Donut chart (pure CSS/SVG) ──────────────────── */
-function DonutChart({ pct, color, size = 120 }) {
+// `empty` is "no assessments recorded", which is not the same as scoring zero.
+// Showing a bold 0% for it is what made an absent-data screen look like a
+// calculation that had run and returned nothing.
+function DonutChart({ pct, color, size = 120, empty = false }) {
   const r   = 46;
   const circ = 2 * Math.PI * r;
-  const fill = ((pct ?? 0) / 100) * circ;
+  const fill = empty ? 0 : ((pct ?? 0) / 100) * circ;
   return (
     <svg width={size} height={size} viewBox="0 0 100 100">
       <circle cx="50" cy="50" r={r} fill="none" stroke="#EEF2FF" strokeWidth="10" />
@@ -66,8 +70,11 @@ function DonutChart({ pct, color, size = 120 }) {
         strokeLinecap="round"
         strokeDashoffset={circ / 4}
         style={{ transition: "stroke-dasharray 0.8s ease" }} />
-      <text x="50" y="46" textAnchor="middle" fontSize="16" fontWeight="700" fill="#0F172A">{pct ?? 0}%</text>
-      <text x="50" y="60" textAnchor="middle" fontSize="8" fill="#94A3B8">avg score</text>
+      <text x="50" y="46" textAnchor="middle" fontSize="16" fontWeight="700"
+        fill={empty ? "#94A3B8" : "#0F172A"}>{empty ? "—" : `${pct ?? 0}%`}</text>
+      <text x="50" y="60" textAnchor="middle" fontSize="8" fill="#94A3B8">
+        {empty ? "no data" : "avg score"}
+      </text>
     </svg>
   );
 }
@@ -118,6 +125,11 @@ function StudentSpotlight({ student, totalAssessments, subject, onBack }) {
     }
   };
 
+  // With no assessments there is nothing to rank or average. Showing "0%" and
+  // "Rank #1" here reads as a measured result rather than missing data, which
+  // is what made this look like a broken calculation.
+  const scored = student.total_assessed > 0;
+
   const pct   = student.average_percent ?? 0;
   const grade = getGrade(pct);
   const gc    = GRADE_COLOR[grade] || GRADE_COLOR["—"];
@@ -125,9 +137,9 @@ function StudentSpotlight({ student, totalAssessments, subject, onBack }) {
   const initials = student.name.split(" ").map(w => w[0]).slice(0, 2).join("");
 
   const stats = [
-    { label: "Class Rank",    value: `#${student.rank}`,                            sub: `of ${totalAssessments > 0 ? "class" : "—"}` },
-    { label: "Average Score", value: pct ? `${pct}%` : "—",                         sub: "overall" },
-    { label: "Highest Marks", value: student.highest_marks ?? "—",                  sub: "best score" },
+    { label: "Class Rank",    value: scored ? `#${student.rank}` : "—",             sub: scored ? "of class" : "not ranked" },
+    { label: "Average Score", value: scored ? `${pct}%` : "—",                      sub: "overall" },
+    { label: "Highest Marks", value: scored ? (student.highest_marks ?? "—") : "—", sub: "best score" },
     { label: "Assessments",   value: `${student.total_assessed}/${totalAssessments}`, sub: "attempted" },
   ];
 
@@ -161,7 +173,7 @@ function StudentSpotlight({ student, totalAssessments, subject, onBack }) {
 
       {/* Profile + donut */}
       <div className="flex items-center gap-5">
-        <DonutChart pct={pct} color={color} size={110} />
+        <DonutChart pct={pct} color={color} size={110} empty={!scored} />
         <div className="flex-1">
           <div className="flex items-center gap-2 mb-1">
             <div className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold text-white shrink-0"
@@ -172,14 +184,23 @@ function StudentSpotlight({ student, totalAssessments, subject, onBack }) {
             </div>
           </div>
           <div className="flex gap-2 mt-2">
-            <span className="px-2.5 py-0.5 rounded-full text-xs font-bold"
-              style={{ background: gc.bg, color: gc.color }}>Grade {grade}</span>
-            <span className="px-2.5 py-0.5 rounded-full text-xs font-bold"
-              style={{ background: "#EEF2FF", color: "#6366F1" }}>Rank #{student.rank}</span>
+            {scored ? (
+              <>
+                <span className="px-2.5 py-0.5 rounded-full text-xs font-bold"
+                  style={{ background: gc.bg, color: gc.color }}>Grade {grade}</span>
+                <span className="px-2.5 py-0.5 rounded-full text-xs font-bold"
+                  style={{ background: "#EEF2FF", color: "#6366F1" }}>Rank #{student.rank}</span>
+              </>
+            ) : (
+              <span className="px-2.5 py-0.5 rounded-full text-xs font-bold"
+                style={{ background: "#F1F5F9", color: "#94A3B8" }}>Not assessed yet</span>
+            )}
           </div>
-          <div className="mt-3">
-            <PercentBar value={pct} />
-          </div>
+          {scored && (
+            <div className="mt-3">
+              <PercentBar value={pct} />
+            </div>
+          )}
         </div>
       </div>
 
@@ -200,11 +221,11 @@ function StudentSpotlight({ student, totalAssessments, subject, onBack }) {
         <p className="text-[10px] font-bold uppercase tracking-widest mb-2" style={{ color: "#94A3B8" }}>Grade Bands</p>
         <div className="flex rounded-lg overflow-hidden text-center text-[10px] font-bold">
           {[
-            { label: "A+ ≥90%", color: "#10B981", active: pct >= 90 },
-            { label: "A ≥75%",  color: "#06B6D4", active: pct >= 75 && pct < 90 },
-            { label: "B ≥60%",  color: "#6366F1", active: pct >= 60 && pct < 75 },
-            { label: "C ≥45%",  color: "#F59E0B", active: pct >= 45 && pct < 60 },
-            { label: "D <45%",  color: "#EF4444", active: pct < 45 },
+            { label: "A+ ≥90%", color: "#10B981", active: scored && pct >= 90 },
+            { label: "A ≥75%",  color: "#06B6D4", active: scored && pct >= 75 && pct < 90 },
+            { label: "B ≥60%",  color: "#6366F1", active: scored && pct >= 60 && pct < 75 },
+            { label: "C ≥45%",  color: "#F59E0B", active: scored && pct >= 45 && pct < 60 },
+            { label: "D <45%",  color: "#EF4444", active: scored && pct < 45 },
           ].map(b => (
             <div key={b.label} className="flex-1 py-1.5"
               style={{
@@ -269,7 +290,7 @@ export default function ReportsPage() {
       setIsLoading(false);
       return;
     }
-    fetch(`${API}/api/v1/reports`, { headers: { Authorization: `Bearer ${token}` } })
+    fetch(withClass(`${API}/api/v1/reports`), { headers: { Authorization: `Bearer ${token}` } })
       .then(async (r) => {
         if (!r.ok) {
           const body = await r.json().catch(() => ({}));
@@ -352,6 +373,18 @@ export default function ReportsPage() {
               subject={subject}
               onBack={() => setSelectedStudent(null)}
             />
+          ) : totalAssessments === 0 ? (
+            /* No assessments recorded — a podium here would award medals for
+               nothing. Say why the numbers are empty instead. */
+            <div className="bg-white rounded-2xl p-8 text-center"
+              style={{ border: "1px solid rgba(99,102,241,0.12)" }}>
+              <p className="text-sm font-semibold mb-1" style={{ color: "#0F172A" }}>
+                No assessments recorded yet
+              </p>
+              <p className="text-xs" style={{ color: "#94A3B8" }}>
+                Ranks, averages and grades appear here once assessments are recorded for this class.
+              </p>
+            </div>
           ) : (
             top3.length >= 1 && (
               <div className="grid grid-cols-3 gap-4">
@@ -435,7 +468,9 @@ export default function ReportsPage() {
                 </thead>
                 <tbody>
                   {filtered.map(s => {
-                    const isTop3    = s.rank <= 3;
+                    // Ranks are still numbered 1..N when nobody has been
+                    // assessed, so guard the medals on an actual score.
+                    const isTop3    = s.rank <= 3 && s.total_assessed > 0;
                     const isActive  = selectedStudent?.student_id === s.student_id;
                     return (
                       <tr key={s.student_id}

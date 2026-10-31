@@ -25,7 +25,7 @@ function PickerField({ label, options, value, onChange, disabled, placeholder, g
       value={value}
       onChange={e => onChange(e.target.value)}
       disabled={disabled}
-      className="w-full px-3 py-2.5 rounded-xl text-sm cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none"
+      className="w-full min-w-0 max-w-full px-3 py-2.5 rounded-xl text-sm truncate cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none"
       style={fieldStyle}
     >
       <option value="">{placeholder}</option>
@@ -94,8 +94,11 @@ export default function ChapterPicker({ onChapterChange }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chapterId]);
 
+  // min-w-0 on the children: a grid track is sized by its content, so a long
+  // chapter name ("Chapter 1 - Natural Resources and Their Use") pushed the
+  // track wider than the phone screen and the page scrolled sideways.
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 [&>*]:min-w-0">
       <PickerField
         label="Class"
         options={classes}

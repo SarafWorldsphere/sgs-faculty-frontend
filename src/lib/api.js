@@ -9,6 +9,8 @@
  * ============================================================
  */
 
+import { clearActiveClass, withClass } from "@/lib/activeClass";
+
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
 
@@ -92,6 +94,9 @@ export async function loginTeacher(email, password) {
       section: data.section,
       school: data.school_name,
       totalStudents: data.total_students ?? null,
+      // Every class this teacher takes. One entry for a single-class teacher,
+      // so the header can simply hide the selector when there is nothing to pick.
+      classes: data.classes ?? [],
     };
 
     return { success: true, user };
@@ -108,22 +113,40 @@ export async function loginTeacher(email, password) {
  * Fetch current user profile from token — GET /api/v1/auth/me
  * Called on app load when a JWT exists but no user profile is cached.
  */
+function toProfile(data) {
+  return {
+    id: `T${String(data.teacher_id).padStart(3, "0")}`,
+    teacher_id: data.teacher_id,
+    name: data.name,
+    email: data.email,
+    avatar: data.avatar_initials || data.name.slice(0, 2).toUpperCase(),
+    subject: data.subject,
+    class: data.class_assigned,
+    section: data.section,
+    school: data.school_name,
+    totalStudents: data.total_students ?? null,
+    classes: data.classes ?? [],
+  };
+}
+
 export async function fetchMe() {
   try {
-    const data = await request("/api/v1/auth/me");
-    return {
-      id: `T${String(data.teacher_id).padStart(3, "0")}`,
-      teacher_id: data.teacher_id,
-      name: data.name,
-      email: data.email,
-      avatar: data.avatar_initials || data.name.slice(0, 2).toUpperCase(),
-      subject: data.subject,
-      class: data.class_assigned,
-      section: data.section,
-      school: data.school_name,
-      totalStudents: data.total_students ?? null,
-    };
-  } catch {
+    // Carries the selected class, so the class name and headcount in the header
+    // describe the class the teacher is actually looking at.
+    const data = await request(withClass("/api/v1/auth/me"));
+    return toProfile(data);
+  } catch (err) {
+    // A stored class the teacher is no longer assigned to — reassignment, or a
+    // deleted map row. Forget the selection and fall back to their primary
+    // class rather than leaving the app stuck on a class it cannot read.
+    if (err?.status === 403) {
+      clearActiveClass();
+      try {
+        return toProfile(await request("/api/v1/auth/me"));
+      } catch {
+        return null;
+      }
+    }
     return null;
   }
 }
@@ -147,7 +170,9 @@ export async function logoutTeacher() {
  * Fetch all notes for the current teacher — GET /api/v1/notes
  */
 export async function fetchNotes() {
-  const data = await request("/api/v1/notes");
+  // Carries the selected class, so a teacher with two classes sees the notes
+  // for the one they are working on rather than both sets mixed together.
+  const data = await request(withClass("/api/v1/notes"));
   return data.notes; // array of NoteOut
 }
 
@@ -155,7 +180,7 @@ export async function fetchNotes() {
  * Create a new note — POST /api/v1/notes
  */
 export async function createNote(noteData) {
-  return request("/api/v1/notes", {
+  return request(withClass("/api/v1/notes"), {
     method: "POST",
     body: JSON.stringify({
       title: noteData.title,
@@ -316,9 +341,9 @@ export async function deleteQuestionPaper(id) {
   return request(`/api/v1/question-papers/${id}`, { method: "DELETE" });
 }
 
-/** Turn a saved paper into an assignment for the teacher's class. */
+/** Turn a saved paper into an assignment for the class being worked in. */
 export async function assignQuestionPaper(paper, dueDate) {
-  return request("/api/v1/assignments", {
+  return request(withClass("/api/v1/assignments"), {
     method: "POST",
     body: JSON.stringify({
       title: paper.title,
@@ -328,4 +353,27 @@ export async function assignQuestionPaper(paper, dueDate) {
       due_date: dueDate,
     }),
   });
+}
+
+/* ─── Parent notifications ──────────────────────────────────────────────────
+   The teacher's record of what was sent to a student's parents. `sent_via` is
+   "manual" — the row is the record, not proof of delivery. */
+
+export async function sendParentNotification({ studentId, type, message }) {
+  // The class is sent so the backend checks the child is on that class's roll.
+  return request(withClass("/api/v1/parent-notifications"), {
+    method: "POST",
+    body: JSON.stringify({ student_id: studentId, notification_type: type, message }),
+  });
+}
+
+export async function fetchParentNotifications(studentId) {
+  const qs = studentId ? `?student_id=${studentId}` : "";
+  const data = await request(`/api/v1/parent-notifications${qs}`);
+  return data?.notifications ?? [];
+}
+
+/** Who an assignment went to, with what each student submitted. */
+export async function fetchAssignmentStudents(assignmentId) {
+  return request(withClass(`/api/v1/assignments/${assignmentId}/students`));
 }
