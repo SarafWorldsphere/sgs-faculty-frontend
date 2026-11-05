@@ -1,8 +1,30 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
+import { fetchMonthlyMarks } from "@/lib/api";
 
 const API = process.env.NEXT_PUBLIC_API_BASE_URL;
+
+const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                     "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** "2026-11" -> "Nov 2026" */
+function monthLabel(value) {
+  const [y, m] = String(value || "").split("-");
+  const name = MONTH_NAMES[Number(m) - 1];
+  return name ? `${name} ${y}` : value;
+}
+
+/** The last 12 months, newest first — enough to cover a school year's reporting. */
+function recentMonths(count = 12) {
+  const out = [];
+  const d = new Date();
+  for (let i = 0; i < count; i++) {
+    out.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+    d.setMonth(d.getMonth() - 1);
+  }
+  return out;
+}
 
 const TYPE_CONFIG = {
   quiz:       { label: "Quiz",       bg: "#F5F3FF", color: "#8B5CF6", dot: "#8B5CF6" },
@@ -501,6 +523,33 @@ export default function AssessmentsPage() {
   const [typeFilter,     setTypeFilter]     = useState("all");
   const [subjectFilter,  setSubjectFilter]  = useState("all");
 
+  /* Two ways to read the same marks. "By test" is the existing list — how the
+     class did on one paper. "By student" answers the question a parent meeting
+     starts from: how is this child doing in this subject this month, across
+     every test. Editing stays in the per-test drawer, which both views open. */
+  const [view,     setView]     = useState("test");   // "test" | "student"
+  const [month,    setMonth]    = useState(() => new Date().toISOString().slice(0, 7));
+  const [monthly,  setMonthly]  = useState(null);     // { forKey, data } | { forKey, error }
+
+  const monthKey = `${month}|${subjectFilter}`;
+
+  useEffect(() => {
+    if (view !== "student") return;
+    let cancelled = false;
+    fetchMonthlyMarks(month, subjectFilter)
+      .then((d) => { if (!cancelled) setMonthly({ forKey: monthKey, data: d }); })
+      .catch((e) => {
+        if (!cancelled) {
+          setMonthly({ forKey: monthKey, error: e?.message || "Could not load the month's marks." });
+        }
+      });
+    return () => { cancelled = true; };
+  }, [view, month, subjectFilter, monthKey]);
+
+  const monthReady   = monthly && monthly.forKey === monthKey;
+  const monthlyData  = monthReady ? monthly.data : null;
+  const monthlyError = monthReady ? monthly.error : null;
+
   useEffect(() => {
     const token = localStorage.getItem("swais_faculty_token");
     if (!token) {
@@ -599,11 +648,48 @@ export default function AssessmentsPage() {
           </div>
         )}
 
+        {/* ── View switch ───────────────────────────────────── */}
+        {!isLoading && !error && assessments.length > 0 && (
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex gap-2">
+              {[{ v: "test", l: "By test" }, { v: "student", l: "By student" }].map((o) => {
+                const on = view === o.v;
+                return (
+                  <button key={o.v} onClick={() => setView(o.v)}
+                    className="text-xs font-semibold px-3 py-1.5 rounded-lg cursor-pointer transition-all"
+                    style={{
+                      background: on ? "#EEF2FF" : "#FFFFFF",
+                      color:      on ? "#6366F1" : "#64748B",
+                      border:     `1px solid ${on ? "#C7D2FE" : "#E2E8F0"}`,
+                    }}>
+                    {o.l}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* The month only narrows the student-wise view; the test list is
+                already date-ordered and short enough to scan. */}
+            {view === "student" && (
+              <label className="flex items-center gap-2 text-xs" style={{ color: "#94A3B8" }}>
+                Month
+                <select value={month} onChange={(e) => setMonth(e.target.value)}
+                  className="text-xs font-semibold px-2.5 py-1.5 rounded-lg cursor-pointer outline-none"
+                  style={{ background: "#FFFFFF", color: "#0F172A", border: "1px solid #E2E8F0" }}>
+                  {recentMonths().map((m) => (
+                    <option key={m} value={m}>{monthLabel(m)}</option>
+                  ))}
+                </select>
+              </label>
+            )}
+          </div>
+        )}
+
         {/* ── Filters Row ───────────────────────────────────── */}
         {!isLoading && !error && assessments.length > 0 && (
           <div className="flex flex-col gap-3">
             {/* Type filter chips */}
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-2" style={{ display: view === "student" ? "none" : undefined }}>
               {[
                 { value: "all",        label: "All Types",   color: "#64748B", bg: "#F1F5F9" },
                 { value: "quiz",       label: "Quiz",        color: TYPE_CONFIG.quiz.color,       bg: TYPE_CONFIG.quiz.bg },
@@ -654,8 +740,117 @@ export default function AssessmentsPage() {
           </div>
         )}
 
+        {/* ── Student-wise view ─────────────────────────────── */}
+        {view === "student" && (
+          !monthReady ? (
+            <div className="bg-white rounded-2xl p-12 text-center" style={{ border: "1px solid rgba(99,102,241,0.08)" }}>
+              <div className="w-8 h-8 rounded-full ai-gradient mx-auto mb-3 animate-pulse" />
+              <p className="text-sm" style={{ color: "#94A3B8" }}>Loading {monthLabel(month)}…</p>
+            </div>
+          ) : monthlyError ? (
+            <div className="bg-white rounded-2xl p-8 text-center" style={{ border: "1px solid #FCA5A5" }}>
+              <p className="text-sm" style={{ color: "#EF4444" }}>{monthlyError}</p>
+            </div>
+          ) : (monthlyData?.assessments?.length ?? 0) === 0 ? (
+            <div className="bg-white rounded-2xl p-12 text-center" style={{ border: "1px solid rgba(99,102,241,0.1)" }}>
+              <p className="text-base font-semibold mb-1" style={{ color: "#0F172A" }}>
+                No tests in {monthLabel(month)}
+              </p>
+              <p className="text-sm" style={{ color: "#94A3B8" }}>
+                {subjectFilter === "all" ? "Try another month." : `No ${subjectFilter} tests this month. Try another month or subject.`}
+              </p>
+            </div>
+          ) : (
+            <div className="bg-white rounded-2xl overflow-hidden" style={{ border: "1px solid rgba(99,102,241,0.08)" }}>
+              <div className="px-5 py-3 flex flex-wrap items-baseline gap-2" style={{ borderBottom: "1px solid rgba(99,102,241,0.1)" }}>
+                <span className="text-sm font-bold" style={{ color: "#0F172A" }}>
+                  {subjectFilter === "all" ? "All subjects" : subjectFilter} · {monthLabel(month)}
+                </span>
+                <span className="text-xs" style={{ color: "#94A3B8" }}>
+                  {monthlyData.assessments.length} {monthlyData.assessments.length === 1 ? "test" : "tests"} ·
+                  {" "}{monthlyData.students.length} students · click a test to edit its marks
+                </span>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm" style={{ minWidth: 640 }}>
+                  <thead style={{ background: "linear-gradient(135deg,#EEF2FF,#F5F3FF)", borderBottom: "1px solid rgba(99,102,241,0.1)" }}>
+                    <tr>
+                      <th className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest" style={{ color: "#6366F1" }}>Roll</th>
+                      <th className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest" style={{ color: "#6366F1" }}>Student</th>
+                      {monthlyData.assessments.map((a) => (
+                        <th key={a.assessment_id}
+                          onClick={() => setSelected(a)}
+                          title={`${a.title} — click to view and edit marks`}
+                          className="px-3 py-3 text-center text-[10px] font-bold uppercase tracking-widest cursor-pointer"
+                          style={{ color: "#6366F1" }}>
+                          <div className="truncate" style={{ maxWidth: 110 }}>{a.title}</div>
+                          <div className="font-medium normal-case" style={{ color: "#94A3B8" }}>
+                            {formatDate(a.assessment_date)} · /{a.max_marks}
+                          </div>
+                        </th>
+                      ))}
+                      <th className="px-4 py-3 text-right text-[10px] font-bold uppercase tracking-widest" style={{ color: "#6366F1" }}>Total</th>
+                      <th className="px-4 py-3 text-right text-[10px] font-bold uppercase tracking-widest" style={{ color: "#6366F1" }}>%</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {monthlyData.students.map((s) => {
+                      const cellFor = (id) => s.marks.find((m) => m.assessment_id === id);
+                      const grade = getGrade(s.percentage);
+                      const gs = GRADE_STYLE[grade];
+                      return (
+                        <tr key={s.student_id} style={{ borderBottom: "1px solid #F1F5F9" }}>
+                          <td className="px-4 py-2.5 font-mono text-xs" style={{ color: "#94A3B8" }}>{s.roll_number}</td>
+                          <td className="px-4 py-2.5 font-medium" style={{ color: "#0F172A" }}>{s.name}</td>
+                          {monthlyData.assessments.map((a) => {
+                            const c = cellFor(a.assessment_id);
+                            return (
+                              <td key={a.assessment_id} className="px-3 py-2.5 text-center"
+                                style={{ fontVariantNumeric: "tabular-nums" }}>
+                                {!c ? (
+                                  <span style={{ color: "#E2E8F0" }}>—</span>
+                                ) : c.is_absent ? (
+                                  <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full"
+                                    style={{ background: "#FEF2F2", color: "#EF4444" }}>Abs</span>
+                                ) : c.marks_obtained === null || c.marks_obtained === undefined ? (
+                                  <span className="text-xs" style={{ color: "#CBD5E1" }}>not entered</span>
+                                ) : (
+                                  <span className="font-semibold" style={{ color: "#0F172A" }}>{c.marks_obtained}</span>
+                                )}
+                              </td>
+                            );
+                          })}
+                          <td className="px-4 py-2.5 text-right font-semibold" style={{ color: "#0F172A", fontVariantNumeric: "tabular-nums" }}>
+                            {s.total === null || s.total === undefined ? "—" : `${s.total} / ${s.max_total}`}
+                          </td>
+                          <td className="px-4 py-2.5 text-right">
+                            {s.percentage === null || s.percentage === undefined ? (
+                              <span style={{ color: "#CBD5E1" }}>—</span>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded-full text-xs font-bold"
+                                style={{ background: gs.bg, color: gs.color }}>{s.percentage}%</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* A student absent for one of four tests is scored out of the
+                  three they sat, not all four — otherwise a day off reads as a
+                  collapse in performance. */}
+              <p className="px-5 py-3 text-xs" style={{ color: "#94A3B8", borderTop: "1px solid #F1F5F9" }}>
+                Totals count only the tests a student sat. Absences and marks not yet entered are excluded.
+              </p>
+            </div>
+          )
+        )}
+
         {/* ── Cards ─────────────────────────────────────────── */}
-        {isLoading ? (
+        {view === "test" && (isLoading ? (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {[1,2,3].map(i => (
               <div key={i} className="bg-white rounded-2xl p-5" style={{ border: "1px solid #E2E8F0" }}>
@@ -760,7 +955,7 @@ export default function AssessmentsPage() {
               );
             })}
           </div>
-        )}
+        ))}
       </div>
 
       {selected && (

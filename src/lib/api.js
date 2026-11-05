@@ -401,3 +401,11 @@ export async function replyToConversation(convId, message) {
     body: JSON.stringify({ message }),
   });
 }
+
+/** Every test in one subject for one month, with student-wise marks.
+ *  month is YYYY-MM; omit subject for every subject. */
+export async function fetchMonthlyMarks(month, subject) {
+  const qs = new URLSearchParams({ month });
+  if (subject && subject !== "all") qs.set("subject", subject);
+  return request(withClass(`/api/v1/assessments/monthly?${qs.toString()}`));
+}
