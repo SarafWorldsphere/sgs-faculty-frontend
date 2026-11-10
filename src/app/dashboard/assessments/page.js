@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { fetchMonthlyMarks } from "@/lib/api";
+import { withClass } from "@/lib/activeClass";
 
 const API = process.env.NEXT_PUBLIC_API_BASE_URL;
 
@@ -108,7 +109,9 @@ function ResultDrawer({ assessment, onClose, onSaved }) {
       setLoading(false);
       return;
     }
-    fetch(`${API}/api/v1/assessments/${assessment.assessment_id}`,
+    // withClass, like every other screen. Without the class the backend skips
+    // its filter entirely and answers for all of the teacher's classes at once.
+    fetch(`${API}${withClass(`/api/v1/assessments/${assessment.assessment_id}`)}`,
       { headers: { Authorization: `Bearer ${token}` } })
       .then(async (r) => {
         if (!r.ok) {
@@ -557,7 +560,9 @@ export default function AssessmentsPage() {
       setIsLoading(false);
       return;
     }
-    fetch(`${API}/api/v1/assessments`, {
+    // The list is class-scoped too. Sending no class_id is what made the same
+    // assessments — and the same selected one — appear under every class.
+    fetch(`${API}${withClass("/api/v1/assessments")}`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then(async (r) => {
