@@ -8,8 +8,8 @@
  */
 
 import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
+import { LOGIN_URL } from "@/lib/api";
 import { NotesProvider } from "@/context/NotesContext";
 import { ToastProvider } from "@/components/ui/Toast";
 import Sidebar from "@/components/layout/Sidebar";
@@ -17,10 +17,20 @@ import Header from "@/components/layout/Header";
 
 function DashboardShell({ children }) {
   const { isAuthenticated, isLoading } = useAuth();
-  const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  useEffect(() => {}, [isAuthenticated, isLoading, router]);
+  // The guard this effect was always meant to hold. It was left empty, so
+  // opening /dashboard with no token rendered the whole shell to anyone —
+  // the API returns nothing without a token, so no data leaked, but the app
+  // was reachable and there was no way back to the login page.
+  //
+  // window.location, not router.push: the login portal is a different
+  // application on another path, and the Next router only moves within this one.
+  useEffect(() => {
+    if (!isLoading && !isAuthenticated) {
+      window.location.href = LOGIN_URL;
+    }
+  }, [isAuthenticated, isLoading]);
 
   if (isLoading) {
     return (
