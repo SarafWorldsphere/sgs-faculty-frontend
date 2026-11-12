@@ -13,7 +13,10 @@ import {
   assignQuestionPaper,
 } from "@/lib/api";
 
-const API = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
+// ?? and not ||: an empty value means "same origin as this app", which is
+// what a deployment behind nginx wants. || would read it as missing and send
+// the browser to localhost:8000.
+const API = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 function getToken() {
   return typeof window !== "undefined" ? localStorage.getItem("swais_faculty_token") : null;
 }
