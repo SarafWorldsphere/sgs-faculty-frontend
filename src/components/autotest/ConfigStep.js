@@ -141,11 +141,18 @@ export default function ConfigStep({ onGenerate, onSaveBlueprint, initial, sylla
 
   const unsupported = rows.filter((r) => r.count > 0 && !supported.includes(r.id));
 
-  // A school paper needs at least one chapter; a competitive paper may draw on
-  // the whole syllabus, so an empty selection is a valid answer there.
-  const syllabusReady = isCompetitive
-    ? Boolean(syllabus.classId && syllabus.subjectId)
-    : Boolean(syllabus.classId && syllabus.subjectId && syllabus.chapterIds.length);
+  // Every paper needs at least one chapter, competitive included.
+  //
+  // A competitive paper ought to draw on the whole syllabus, and this screen
+  // was written that way. The AI service cannot do it: it writes questions
+  // from the chapter text it is given, so with no chapter it has no source
+  // and answers "Please select a valid Class, Subject, and Chapter". The
+  // teacher saw that a minute after pressing Generate, having been allowed
+  // to proceed. Better to ask for the chapter up front and be honest about
+  // what the generator can do today.
+  const syllabusReady = Boolean(
+    syllabus.classId && syllabus.subjectId && syllabus.chapterIds.length
+  );
 
   const ready = syllabusReady && balanced;
 
@@ -504,7 +511,7 @@ export default function ConfigStep({ onGenerate, onSaveBlueprint, initial, sylla
           </button>
           {!syllabusReady && (
             <span style={{ fontSize: 12, color: "#94A3B8" }}>
-              {isCompetitive ? "Pick a class and subject first." : "Pick at least one chapter first."}
+              Pick a class, subject and at least one chapter first.
             </span>
           )}
         </div>

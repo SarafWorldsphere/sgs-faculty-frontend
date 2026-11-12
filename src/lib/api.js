@@ -391,10 +391,24 @@ export async function fetchQuestionTypeCapabilities() {
   }
 }
 
-/** The single difficulty to send to an API that only accepts one of them. */
+/** Hardest last, so a tie can be broken towards the harder level. */
+const DIFFICULTY_RANK = { Easy: 0, Medium: 1, Hard: 2 };
+
+/**
+ * The single difficulty to send to an API that only accepts one of them.
+ *
+ * The competitive mix is Easy 20 / Medium 40 / Hard 40, so the top two tie.
+ * Sorting on share alone left that tie to array order, which put Medium
+ * first — a competitive paper asked for at the same difficulty as a weekly
+ * test, with the Hard share on screen having no effect. Ties now go to the
+ * harder level, which is the safer way to be wrong about an exam paper.
+ */
 function dominantDifficulty(mix) {
   if (!mix) return "Medium";
-  return Object.entries(mix).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "Medium";
+  const ranked = Object.entries(mix).sort(
+    (a, b) => b[1] - a[1] || (DIFFICULTY_RANK[b[0]] ?? 0) - (DIFFICULTY_RANK[a[0]] ?? 0)
+  );
+  return ranked[0]?.[0] ?? "Medium";
 }
 
 export async function saveQuestionPaper(paper) {
