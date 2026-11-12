@@ -321,7 +321,81 @@ export async function fetchTeacherProfile() {
 
 /* ─── Question papers (auto test) ───────────────────────────────────────────
    Generated papers are not stored until the teacher saves one. Saved papers
-   are what Print and "Assign to students" work from. */
+   are what the two printouts work from. */
+
+/**
+ * Ask the AI for a paper.
+ *
+ * `config` is what the Configure screen produced. The whole of it is sent:
+ * the backend forwards what the AI service reads today and ignores the rest,
+ * so the screen can ship before the generator is rebuilt around blueprints.
+ */
+export async function generateQuestionPaper(config) {
+  const competitive = config.testType === "competitive";
+  return request(competitive ? "/api/v1/question-papers/generate-competitive"
+                             : "/api/v1/question-papers/generate", {
+    method: "POST",
+    body: JSON.stringify({
+      // What the backend accepts today. chapterId is the first chapter, so a
+      // single-chapter paper keeps working against the current endpoint while
+      // chapterIds waits on the AI service.
+      chapterId: config.chapterIds?.[0] ?? null,
+      difficulty: dominantDifficulty(config.difficultyMix),
+      totalMarks: config.totalMarks,
+      questionType: null,
+
+      // The new shape.
+      chapterIds: config.chapterIds ?? [],
+      examType: config.examType,
+      classLevel: config.classLevel,
+      subject: config.subject,
+      difficultyMix: config.difficultyMix,
+      blueprint: config.blueprint,
+      minutes: config.minutes,
+      negativeMarking: config.negativeMarking,
+      examTarget: config.examTarget,
+      questionCount: config.questionCount,
+      marksEach: config.marksEach,
+    }),
+  });
+}
+
+/**
+ * One replacement question, for Rewrite and Replace.
+ *
+ * Same type and same marks as the one it replaces, so the blueprint total
+ * never moves. The endpoint does not exist on the AI service yet; until it
+ * does this throws and the review screen says so, rather than silently
+ * leaving the question as it was.
+ */
+export async function regenerateQuestion({ type, marks, chapterIds, difficulty, exclude }) {
+  return request("/api/v1/question-papers/question", {
+    method: "POST",
+    body: JSON.stringify({ type, marks, chapterIds, difficulty, exclude: exclude ?? [] }),
+  });
+}
+
+/**
+ * Which question types the AI can write today.
+ *
+ * A missing endpoint is a normal answer — the caller falls back to the types
+ * the service has always returned — so this resolves null rather than throwing
+ * on a 404.
+ */
+export async function fetchQuestionTypeCapabilities() {
+  try {
+    const data = await request("/api/v1/question-papers/capabilities");
+    return Array.isArray(data?.questionTypes) ? data.questionTypes : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The single difficulty to send to an API that only accepts one of them. */
+function dominantDifficulty(mix) {
+  if (!mix) return "Medium";
+  return Object.entries(mix).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "Medium";
+}
 
 export async function saveQuestionPaper(paper) {
   // paper: { title, chapterId, subject, difficulty, totalMarks, questionType, paperText | questions }
