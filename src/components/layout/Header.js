@@ -80,6 +80,17 @@ export default function Header({ onMenuToggle }) {
             </svg>
           </button>
 
+          {/* The class selector sits outside the hidden block, on purpose.
+              Everything else here is context a teacher can do without on a
+              small screen; the selector is a control, and hiding it left a
+              teacher with two classes unable to switch at all on a phone —
+              which is most of them, most of the time. */}
+          {(classes?.length ?? 0) > 1 && (
+            <div className="sm:hidden">
+              <ClassSelector />
+            </div>
+          )}
+
           <div className="hidden sm:flex items-center gap-2.5 flex-wrap">
             {/* The subject the teacher takes in the *selected* class, not the
                 one on their teacher record. Those differ for anyone teaching

@@ -241,11 +241,31 @@ function AssignModal({ students: initialStudents, onClose, onSuccess }) {
   const [attachment, setAttachment] = useState(null);   // optional — any file type
   const attachRef = useRef(null);
 
+  // Scoped to the class being worked in. Without class_id the backend returns
+  // every subject in the school — and because subject_master holds one row
+  // per class-and-subject, "Mathematics" came back once for each class. That
+  // is both complaints at once: subjects the teacher does not take, each of
+  // them several times over.
+  //
+  // Names are deduplicated as well. One class should not have two rows for
+  // the same subject, but the data does contain them, and a teacher picking
+  // between two identical entries has no way to choose correctly.
   useEffect(() => {
     const token = localStorage.getItem("swais_faculty_token");
-    fetch(`${API}/api/v1/subjects`, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+    fetch(withClass(`${API}/api/v1/subjects`), {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
       .then(r => r.ok ? r.json() : Promise.reject())
-      .then(d => setSubjects(d.subjects || []))
+      .then(d => {
+        const seen = new Set();
+        const unique = (d.subjects || []).filter(s => {
+          const name = (s.subject_name || "").trim().toLowerCase();
+          if (!name || seen.has(name)) return false;
+          seen.add(name);
+          return true;
+        });
+        setSubjects(unique);
+      })
       .catch(() => setSubjects([]));
   }, []);
 
@@ -269,8 +289,17 @@ function AssignModal({ students: initialStudents, onClose, onSuccess }) {
     if (!value) setChapters([]);
   };
 
+  // A title and a due date are not an assignment. "Homework" due Friday tells
+  // a student nothing to do — the work is either written out or attached as a
+  // file, and one of the two has to be there.
+  const missingWork = !desc.trim() && !attachment;
+
   const handleAssign = async () => {
     if (!title.trim() || !dueDate || saving) return;
+    if (missingWork) {
+      setError("Add instructions or attach a file — a title on its own does not tell the student what to do.");
+      return;
+    }
     setSaving(true);
     setError("");
     const token = localStorage.getItem("swais_faculty_token");
@@ -531,11 +560,12 @@ function AssignModal({ students: initialStudents, onClose, onSuccess }) {
                   Cancel
                 </button>
                 <button onClick={handleAssign}
-                  disabled={!title.trim() || !dueDate || saving}
+                  disabled={!title.trim() || !dueDate || missingWork || saving}
+                  title={missingWork ? "Add instructions or attach a file first" : undefined}
                   className="flex-1 py-2.5 rounded-xl text-sm font-semibold cursor-pointer transition-all"
                   style={{
-                    background: (title.trim() && dueDate && !saving) ? "linear-gradient(135deg,#6366F1,#8B5CF6)" : "#E2E8F0",
-                    color: (title.trim() && dueDate && !saving) ? "white" : "#94A3B8",
+                    background: (title.trim() && dueDate && !missingWork && !saving) ? "linear-gradient(135deg,#6366F1,#8B5CF6)" : "#E2E8F0",
+                    color: (title.trim() && dueDate && !missingWork && !saving) ? "white" : "#94A3B8",
                   }}>
                   {saving ? "Assigning…" : isBulk ? `Assign to ${students.length} Students` : "Assign"}
                 </button>

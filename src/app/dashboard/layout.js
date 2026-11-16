@@ -32,12 +32,22 @@ function DashboardShell({ children }) {
     }
   }, [isAuthenticated, isLoading]);
 
-  if (isLoading) {
+  // Also while unauthenticated, not only while loading.
+  //
+  // The redirect above runs in an effect, which is after the first paint. So
+  // returning the shell here showed a teacher the whole dashboard — sidebar,
+  // header, empty widgets — for as long as the navigation took, then yanked
+  // it away. It read as a page that loaded and then broke. Holding this
+  // screen until the redirect lands means the shell is never painted to
+  // someone who is not signed in.
+  if (isLoading || !isAuthenticated) {
     return (
       <div className="flex-1 flex items-center justify-center bg-gradient-to-br from-[#0f172a] via-[#1e1b4b] to-[#0f172a] min-h-screen">
         <div className="flex flex-col items-center gap-3">
           <div className="w-10 h-10 border-3 border-primary border-t-transparent rounded-full animate-spin" />
-          <p className="text-sm text-text-lighter">Loading dashboard...</p>
+          <p className="text-sm text-text-lighter">
+            {isLoading ? "Loading dashboard..." : "Taking you to sign in..."}
+          </p>
         </div>
       </div>
     );

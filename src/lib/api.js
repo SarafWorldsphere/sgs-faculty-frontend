@@ -29,6 +29,48 @@ function getToken() {
   return localStorage.getItem(TOKEN_KEY);
 }
 
+/**
+ * A sentence a teacher can read, from whatever shape the error arrived in.
+ *
+ * FastAPI returns `detail` as a string for a raised HTTPException, but as an
+ * *array of objects* for a validation failure — one per field, each with loc,
+ * msg and type. Passing that straight to new Error() produced the literal
+ * text "[object Object]" on screen, which told the teacher nothing and hid
+ * the real reason the paper would not generate.
+ */
+async function errorMessage(res) {
+  const fallback = `HTTP ${res.status}`;
+  let body;
+  try {
+    body = await res.json();
+  } catch {
+    return fallback;
+  }
+
+  const detail = body?.detail ?? body?.error ?? body?.message;
+  if (!detail) return fallback;
+  if (typeof detail === "string") return detail;
+
+  // Validation errors: "totalMarks: field required", joined.
+  if (Array.isArray(detail)) {
+    const parts = detail
+      .map((d) => {
+        if (typeof d === "string") return d;
+        const field = Array.isArray(d?.loc) ? d.loc.filter((p) => p !== "body").join(".") : "";
+        const msg = d?.msg || d?.message || "";
+        return [field, msg].filter(Boolean).join(": ");
+      })
+      .filter(Boolean);
+    if (parts.length) return parts.join("; ");
+  }
+
+  if (typeof detail === "object") {
+    const msg = detail.msg || detail.message || detail.error;
+    if (typeof msg === "string") return msg;
+  }
+  return fallback;
+}
+
 async function request(path, options = {}) {
   const token = getToken();
   const headers = {
@@ -49,14 +91,7 @@ async function request(path, options = {}) {
         window.location.href = LOGIN_URL;
       }
     }
-    let detail = `HTTP ${res.status}`;
-    try {
-      const body = await res.json();
-      detail = body.detail || detail;
-    } catch {
-      /* ignore */
-    }
-    const err = new Error(detail);
+    const err = new Error(await errorMessage(res));
     err.status = res.status;   // mark as an HTTP error so callers can distinguish from network errors
     throw err;
   }
@@ -283,12 +318,7 @@ async function uploadRequest(path, file, method = "POST") {
   });
 
   if (!res.ok) {
-    let detail = `HTTP ${res.status}`;
-    try {
-      const b = await res.json();
-      detail = b.detail || detail;
-    } catch { /* ignore */ }
-    const err = new Error(detail);
+    const err = new Error(await errorMessage(res));
     err.status = res.status;
     throw err;
   }

@@ -227,8 +227,12 @@ export default function AutoTestPage() {
       setQuestions((prev) => prev.map((q, i) =>
         i === index ? normalise(one, current.type, current.marks) : q));
     } catch (err) {
+      // 405 as well as 404. The endpoint does not exist, so FastAPI matches
+      // /question-papers/{paper_id} instead and answers "Method Not Allowed"
+      // to a POST. Only 404 was handled, so a teacher saw that bare phrase
+      // and had no idea what to do with it.
       setError(
-        err.status === 404
+        err.status === 404 || err.status === 405
           ? `Rewriting one question isn't available yet — the AI service hasn't shipped that endpoint. Drop the question, or regenerate the whole paper.`
           : (err.message || "Couldn't rewrite that question.")
       );
