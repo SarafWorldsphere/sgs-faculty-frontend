@@ -262,7 +262,10 @@ export async function deleteNote(id) {
  * Fetch chapter list — GET /api/v1/chapters
  */
 export async function fetchChapters() {
-  const data = await request("/api/v1/chapters");
+  // Scoped to the class being worked in. Without it a teacher taking four
+  // classes got every chapter of all four in one list, and switching class in
+  // the header changed nothing.
+  const data = await request(withClass("/api/v1/chapters"));
   return data.chapters;
 }
 
