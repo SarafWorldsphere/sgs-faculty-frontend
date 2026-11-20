@@ -1,12 +1,16 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import Pagination from "@/components/ui/Pagination";
 import { todayISO } from "@/lib/dates";
 import { withClass } from "@/lib/activeClass";
 import { sendParentNotification } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 
 const API = process.env.NEXT_PUBLIC_API_BASE_URL;
+
+// Rows per page in the roster table.
+const PER_PAGE = 12;
 
 const GENDER_STYLE = {
   male:   { bg: "#EFF6FF", color: "#3B82F6" },
@@ -753,6 +757,7 @@ export default function StudentsPage() {
   const [isLoading,     setIsLoading]     = useState(true);
   const [error,         setError]         = useState(null);
   const [search,        setSearch]        = useState("");
+  const [page,          setPage]          = useState(1);
   const [drawerStudent, setDrawerStudent] = useState(null);
   const [notifyStudent, setNotifyStudent] = useState(null);
   const [assignStudent, setAssignStudent] = useState(null);
@@ -768,6 +773,10 @@ export default function StudentsPage() {
   };
 
   const clearSelection = () => setSelectedIds(new Set());
+
+  // Typing narrows the list under the current page, so page 4 of the old list
+  // is usually past the end of the new one.
+  useEffect(() => { setPage(1); }, [search]);
 
   useEffect(() => {
     const token = localStorage.getItem("swais_faculty_token");
@@ -811,6 +820,16 @@ export default function StudentsPage() {
     (s.roll_no || "").toLowerCase().includes(search.toLowerCase()) ||
     (s.guardian_name || "").toLowerCase().includes(search.toLowerCase())
   );
+
+  // A full roster ran to one long scroll. Twelve rows fill the table without
+  // pushing the page past a laptop screen.
+  //
+  // Paged over `filtered`, not `students`: paging the unfiltered list and then
+  // searching inside the page is how a search from page 3 comes back empty
+  // while the student is sitting on page 1.
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PER_PAGE));
+  const safePage   = Math.min(page, totalPages);
+  const visible    = filtered.slice((safePage - 1) * PER_PAGE, safePage * PER_PAGE);
 
   return (
     <>
@@ -870,23 +889,28 @@ export default function StudentsPage() {
                     <th className="px-4 py-3.5 w-10">
                       <input
                         type="checkbox"
-                        checked={filtered.length > 0 && filtered.every(s => selectedIds.has(s.student_id))}
+                        checked={visible.length > 0 && visible.every(s => selectedIds.has(s.student_id))}
                         ref={el => {
                           if (el) {
-                            const someSelected = filtered.some(s => selectedIds.has(s.student_id));
-                            const allSelected  = filtered.length > 0 && filtered.every(s => selectedIds.has(s.student_id));
+                            const someSelected = visible.some(s => selectedIds.has(s.student_id));
+                            const allSelected  = visible.length > 0 && visible.every(s => selectedIds.has(s.student_id));
                             el.indeterminate = someSelected && !allSelected;
                           }
                         }}
+                        /* This page only. Ticking it to mean all 46 students
+                           would send homework to names the teacher never saw.
+                           Picks made on other pages are left alone either way. */
                         onChange={(e) => {
-                          if (e.target.checked) {
-                            setSelectedIds(new Set(filtered.map(s => s.student_id)));
-                          } else {
-                            clearSelection();
-                          }
+                          const ids = visible.map(s => s.student_id);
+                          setSelectedIds(prev => {
+                            const next = new Set(prev);
+                            if (e.target.checked) ids.forEach(id => next.add(id));
+                            else                  ids.forEach(id => next.delete(id));
+                            return next;
+                          });
                         }}
                         className="w-4 h-4 cursor-pointer accent-indigo-500"
-                        title="Select all"
+                        title="Select all on this page"
                       />
                     </th>
                     {["Roll No.", "Name", "Gender", "Parent / Guardian", "Phone", "Avg %", "Grade", "Actions"].map(h => (
@@ -896,7 +920,7 @@ export default function StudentsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.map((s, i) => {
+                  {visible.map((s, i) => {
                     const gStyle = GENDER_STYLE[(s.gender || "other").toLowerCase()] || GENDER_STYLE.other;
                     const perf   = reportMap[s.student_id];
                     const grade  = getGrade(perf?.average_percent);
@@ -1003,10 +1027,17 @@ export default function StudentsPage() {
           )}
         </div>
 
-        {!isLoading && !error && (
-          <p className="text-xs text-right" style={{ color: "#94A3B8" }}>
-            Showing <span className="font-semibold" style={{ color: "#6366F1" }}>{filtered.length}</span> of {students.length} students
-          </p>
+        {!isLoading && !error && filtered.length > 0 && (
+          <div className="bg-white rounded-2xl" style={{ border: "1px solid rgba(99,102,241,0.1)" }}>
+            <Pagination
+              page={safePage}
+              totalPages={totalPages}
+              total={filtered.length}
+              perPage={PER_PAGE}
+              onChange={setPage}
+              noun="students"
+            />
+          </div>
         )}
       </div>
 
