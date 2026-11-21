@@ -18,6 +18,26 @@ const navItems = [
     ),
   },
   {
+    // High in the list on purpose: it is a daily habit, not an occasional tool,
+    // and everything else in the syllabus planner is derived from it.
+    label: "Daily Marking",
+    href: "/dashboard/daily-marking",
+    icon: (
+      <svg className="w-[18px] h-[18px]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+      </svg>
+    ),
+  },
+  {
+    label: "My Syllabus Plan",
+    href: "/dashboard/syllabus-plan",
+    icon: (
+      <svg className="w-[18px] h-[18px]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+      </svg>
+    ),
+  },
+  {
     label: "Notes/Chapters",
     href: "/dashboard/notes",
     icon: (

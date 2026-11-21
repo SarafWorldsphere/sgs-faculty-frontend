@@ -14,6 +14,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { fetchClasses, fetchSubjects, fetchChaptersBySubject } from "@/lib/api";
+import { fetchCoveredTopics } from "@/lib/plannerApi";
 
 const field = {
   border: "1.5px solid #E2E8F0",
@@ -87,13 +88,53 @@ export default function SyllabusPicker({ onChange, chaptersOptional = false }) {
       .catch(() => {});
   }, [classId]);
 
+  // Only the chapters this class has actually reached.
+  //
+  // A paper for FA-I could previously contain questions on material the class
+  // had not been taught, because the picker listed every chapter in the
+  // subject. The planner knows which topics carry a taught mark, so the list
+  // is narrowed to those.
+  //
+  // When the planner returns nothing — no plan set up, or the service is
+  // unreachable — the full list is shown exactly as before. A school not using
+  // the syllabus planner must not lose auto test.
+  const [scopedToCovered, setScopedToCovered] = useState(false);
+
   useEffect(() => {
-    setChapters([]); setPicked([]);
+    setChapters([]); setPicked([]); setScopedToCovered(false);
     if (!subjectId) return;
-    fetchChaptersBySubject(subjectId)
-      .then((list) => setChapters(Array.isArray(list) ? list : []))
-      .catch(() => {});
-  }, [subjectId]);
+    let alive = true;
+
+    (async () => {
+      const list = await fetchChaptersBySubject(subjectId).catch(() => []);
+      const all = Array.isArray(list) ? list : [];
+      if (!alive) return;
+
+      let covered = [];
+      if (classId) {
+        const res = await fetchCoveredTopics({
+          classId: Number(classId),
+          subjectId: Number(subjectId),
+        }).catch(() => null);
+        covered = res?.items ?? [];
+      }
+      if (!alive) return;
+
+      const taughtChapterIds = new Set(
+        covered.map((t) => t.chapter_id).filter((id) => id !== null && id !== undefined)
+      );
+
+      if (taughtChapterIds.size > 0) {
+        setChapters(all.filter((c) => taughtChapterIds.has(Number(c.chapter_id))));
+        setScopedToCovered(true);
+      } else {
+        setChapters(all);
+        setScopedToCovered(false);
+      }
+    })();
+
+    return () => { alive = false; };
+  }, [subjectId, classId]);
 
   // Report upward. `onChange` is usually an inline arrow, so a new function
   // every render — keeping it in a ref stops that from re-running this effect
@@ -128,6 +169,11 @@ export default function SyllabusPicker({ onChange, chaptersOptional = false }) {
 
   return (
     <div className="space-y-3">
+      {scopedToCovered && (
+        <p className="text-[11px] px-3 py-2 rounded-lg" style={{ background: "#ECFDF5", color: "#047857" }}>
+          Showing only chapters this class has been taught, from the syllabus plan.
+        </p>
+      )}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 [&>*]:min-w-0">
         <Select
           label="Class"
