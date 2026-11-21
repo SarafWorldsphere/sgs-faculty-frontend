@@ -3,10 +3,10 @@
 /**
  * Setting up a paper.
  *
- * Replaces a screen that asked for one difficulty, one question type and a
- * marks slider. None of those could describe a real paper: a PT carries seven
- * kinds of question across several chapters, and the slider could not even
- * produce the 12.5 a CT is marked out of.
+ * Replaces a screen that asked for one chapter, one difficulty, one question
+ * type and a marks slider that stepped in tens. None of those could describe a
+ * real paper: a PT carries seven kinds of question across several chapters,
+ * and the slider could not even produce the 12.5 a CT is marked out of.
  *
  * The shape of the screen follows from that. Picking a test type fills in a
  * blueprint — how many of each question type and what each is worth — and the
@@ -19,17 +19,13 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
-import ChapterPicker from "@/components/chapters/ChapterPicker";
+import SyllabusPicker from "@/components/autotest/SyllabusPicker";
+import { fetchQuestionTypeCapabilities } from "@/lib/api";
 import {
   TEST_TYPES, EXAM_PATTERNS, DIFFICULTIES, DEFAULT_MIX, COMPETITIVE_MIX,
-  ASSUMED_SUPPORTED, rowsForTestType, blueprintTotal, testTypeById,
+  ASSUMED_SUPPORTED, rowsForTestType, blueprintTotal, testTypeById, examTypeFor,
+  questionTypeLabel,
 } from "@/lib/testBlueprints";
-
-const API = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
-
-function getToken() {
-  return typeof window !== "undefined" ? localStorage.getItem("swais_faculty_token") : null;
-}
 
 /**
  * Which question types the AI service can write today.
@@ -40,22 +36,13 @@ function getToken() {
  */
 function useSupportedTypes() {
   const [supported, setSupported] = useState(ASSUMED_SUPPORTED);
-
   useEffect(() => {
     let alive = true;
-    fetch(`${API}/api/v1/question-papers/capabilities`, {
-      headers: { Authorization: `Bearer ${getToken()}` },
-    })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        if (alive && Array.isArray(d?.questionTypes) && d.questionTypes.length) {
-          setSupported(d.questionTypes);
-        }
-      })
+    fetchQuestionTypeCapabilities()
+      .then((types) => { if (alive && types?.length) setSupported(types); })
       .catch(() => { /* not published yet — the assumed set stands */ });
     return () => { alive = false; };
   }, []);
-
   return supported;
 }
 
@@ -87,20 +74,29 @@ function Eyebrow({ children }) {
   );
 }
 
-export default function ConfigStep({ onGenerate }) {
+const EMPTY_SYLLABUS = {
+  classId: null, className: "", subjectId: null, subject: "",
+  chapterIds: [], chapterNames: [],
+};
+
+export default function ConfigStep({ onGenerate, onSaveBlueprint, initial, syllabus: board = "State" }) {
   const supported = useSupportedTypes();
 
-  const [testType, setTestType] = useState("pt");
-  const [examNo, setExamNo] = useState("PT-1");
-  const [chapterId, setChapterId] = useState("");
-  const [chapterName, setChapterName] = useState("");
-  const [mix, setMix] = useState(DEFAULT_MIX);
-  const [rows, setRows] = useState(() => rowsForTestType("pt"));
-  const [pattern, setPattern] = useState("ntse");
-  const [qCount, setQCount] = useState(50);
-  const [qMarks, setQMarks] = useState(1);
-  const [minutes, setMinutes] = useState(45);
-  const [negative, setNegative] = useState(false);
+  const [testType, setTestType] = useState(initial?.testType ?? "pt");
+  const [examNo,   setExamNo]   = useState(initial?.examNo ?? "PT-1");
+  const [syllabus, setSyllabus] = useState(EMPTY_SYLLABUS);
+  const [mix,      setMix]      = useState(initial?.difficultyMix ?? DEFAULT_MIX);
+  // A saved blueprint stores ids, counts and marks but no labels — the label
+  // belongs to the question type, not to someone's saved preference.
+  const [rows,     setRows]     = useState(() =>
+    initial?.blueprint?.length
+      ? initial.blueprint.map((b) => ({ ...b, label: questionTypeLabel(b.id) }))
+      : rowsForTestType(initial?.testType ?? "pt"));
+  const [pattern,  setPattern]  = useState(initial?.pattern ?? "ntse");
+  const [qCount,   setQCount]   = useState(initial?.questionCount ?? 50);
+  const [qMarks,   setQMarks]   = useState(initial?.marksEach ?? 1);
+  const [minutes,  setMinutes]  = useState(initial?.minutes ?? 45);
+  const [negative, setNegative] = useState(initial?.negativeMarking ?? false);
 
   const type = testTypeById(testType);
   const isCompetitive = type.group === "competitive";
@@ -110,7 +106,9 @@ export default function ConfigStep({ onGenerate }) {
   const chooseType = (id) => {
     setTestType(id);
     setRows(rowsForTestType(id));
-    setMix(testTypeById(id).group === "competitive" ? COMPETITIVE_MIX : DEFAULT_MIX);
+    const next = testTypeById(id);
+    setMix(next.group === "competitive" ? COMPETITIVE_MIX : DEFAULT_MIX);
+    setMinutes(next.minutes);
   };
 
   const choosePattern = (id) => {
@@ -128,30 +126,86 @@ export default function ConfigStep({ onGenerate }) {
     () => (isCompetitive ? qCount * qMarks : blueprintTotal(rows)),
     [isCompetitive, qCount, qMarks, rows]
   );
-  const target = type.totalMarks;
-  const balanced = Math.abs(total - target) < 0.01;
+  // A school paper is marked out of a fixed number and the blueprint has to
+  // reach it. A competitive paper has no such number — the pattern sets the
+  // count, and 45 questions is a 45-mark paper. Checking it against the
+  // competitive default of 50 would have failed NMMS and both olympiads.
+  const target = isCompetitive ? total : type.totalMarks;
+  const balanced = isCompetitive ? total > 0 : Math.abs(total - type.totalMarks) < 0.01;
+
+  // What the AI service accepts today for a competitive paper. NMMS at 45 and
+  // the olympiads at 35 fall outside it, so the teacher is told here rather
+  // than by a failed generation a minute later.
+  const ACCEPTED_TOTALS = [20, 30, 50, 70, 100];
+  const totalRejected = isCompetitive && total > 0 && !ACCEPTED_TOTALS.includes(total);
 
   const unsupported = rows.filter((r) => r.count > 0 && !supported.includes(r.id));
 
-  const submit = () => {
-    onGenerate({
-      testType, examNo: type.numbered ? examNo : null,
-      chapterId, chapterName,
+  // Every paper needs at least one chapter, competitive included.
+  //
+  // A competitive paper ought to draw on the whole syllabus, and this screen
+  // was written that way. The AI service cannot do it: it writes questions
+  // from the chapter text it is given, so with no chapter it has no source
+  // and answers "Please select a valid Class, Subject, and Chapter". The
+  // teacher saw that a minute after pressing Generate, having been allowed
+  // to proceed. Better to ask for the chapter up front and be honest about
+  // what the generator can do today.
+  const syllabusReady = Boolean(
+    syllabus.classId && syllabus.subjectId && syllabus.chapterIds.length
+  );
+
+  const ready = syllabusReady && balanced;
+
+  const buildConfig = () => {
+    const activePattern = EXAM_PATTERNS.find((p) => p.id === pattern);
+    return {
+      testType,
+      examNo:   type.numbered ? examNo : null,
+      examType: examTypeFor(testType, examNo),
+      label:      type.label,
+      shortLabel: type.shortLabel,
+      syllabus: board,
+
+      classId:   syllabus.classId,
+      classLevel: syllabus.className,
+      subjectId: syllabus.subjectId,
+      subject:   syllabus.subject,
+      chapterIds: syllabus.chapterIds,
+      chapterNames: syllabus.chapterNames,
+
       difficultyMix: mix,
       totalMarks: total,
-      minutes: isCompetitive ? minutes : null,
+      minutes,
       negativeMarking: isCompetitive ? negative : false,
-      pattern: isCompetitive ? pattern : null,
+
+      examTarget: isCompetitive ? (activePattern?.target ?? "Custom") : null,
+      pattern:    isCompetitive ? pattern : null,
+      questionCount: isCompetitive ? qCount : null,
+      marksEach:     isCompetitive ? qMarks : null,
+
       blueprint: isCompetitive
         ? [{ id: "mcq", count: qCount, each: qMarks }]
         : rows.filter((r) => r.count > 0).map(({ id, count, each }) => ({ id, count, each })),
-      // Kept so the screen can say which questions it had to leave blank.
+
+      // Kept so the review screen can say which questions it had to leave blank.
       unsupported: unsupported.map((r) => r.id),
-    });
+    };
+  };
+
+  const submit = () => {
+    if (!ready) return;
+    onGenerate(buildConfig());
   };
 
   const school = TEST_TYPES.filter((t) => t.group === "school");
   const competitive = TEST_TYPES.filter((t) => t.group === "competitive");
+
+  const tileStyle = (on) => ({
+    textAlign: "left", padding: "13px 14px", minHeight: 62, cursor: "pointer",
+    borderRadius: 12,
+    border: `1.5px solid ${on ? "#6366F1" : "#E2E8F0"}`,
+    background: on ? "#EEF2FF" : "#fff",
+  });
 
   return (
     <div style={{ display: "flex", flexWrap: "wrap", gap: 24, alignItems: "flex-start" }}>
@@ -175,18 +229,12 @@ export default function ConfigStep({ onGenerate }) {
             {school.map((t) => {
               const on = t.id === testType;
               return (
-                <button key={t.id} type="button" onClick={() => chooseType(t.id)} aria-pressed={on}
-                  style={{
-                    textAlign: "left", padding: "13px 14px", minHeight: 62, cursor: "pointer",
-                    borderRadius: 12,
-                    border: `1.5px solid ${on ? "#6366F1" : "#E2E8F0"}`,
-                    background: on ? "#EEF2FF" : "#fff",
-                  }}>
+                <button key={t.id} type="button" onClick={() => chooseType(t.id)} aria-pressed={on} style={tileStyle(on)}>
                   <span style={{ display: "block", fontSize: 13, fontWeight: on ? 700 : 600, color: on ? "#3730A3" : "#334155" }}>
                     {t.label}
                   </span>
                   <span style={{ display: "block", fontSize: 12, marginTop: 2, color: on ? "#4F46E5" : "#94A3B8" }}>
-                    {t.note}
+                    {on ? `${t.totalMarks} marks · selected` : t.note}
                   </span>
                 </button>
               );
@@ -200,17 +248,12 @@ export default function ConfigStep({ onGenerate }) {
             const on = t.id === testType;
             return (
               <button key={t.id} type="button" onClick={() => chooseType(t.id)} aria-pressed={on}
-                style={{
-                  width: "100%", boxSizing: "border-box", textAlign: "left", padding: "13px 14px",
-                  minHeight: 62, cursor: "pointer", borderRadius: 12,
-                  border: `1.5px solid ${on ? "#6366F1" : "#E2E8F0"}`,
-                  background: on ? "#EEF2FF" : "#fff",
-                }}>
+                style={{ ...tileStyle(on), width: "100%", boxSizing: "border-box" }}>
                 <span style={{ display: "block", fontSize: 13, fontWeight: on ? 700 : 600, color: on ? "#3730A3" : "#334155" }}>
                   {t.label}
                 </span>
                 <span style={{ display: "block", fontSize: 12, marginTop: 2, color: on ? "#4F46E5" : "#94A3B8" }}>
-                  {t.note}
+                  {on ? "Multiple choice only · selected" : t.note}
                 </span>
               </button>
             );
@@ -251,9 +294,11 @@ export default function ConfigStep({ onGenerate }) {
             Syllabus covered
           </h2>
           <p style={{ margin: "5px 0 14px", fontSize: 13, color: "#64748B" }}>
-            Class, subject and the chapters this paper draws from.
+            {isCompetitive
+              ? "Leave chapters empty to draw from the whole syllabus."
+              : "A paper can span several chapters, so chapters are a multi-select."}
           </p>
-          <ChapterPicker onChapterChange={(id, name) => { setChapterId(id); setChapterName(name); }} />
+          <SyllabusPicker onChange={setSyllabus} chaptersOptional={isCompetitive} />
         </section>
 
         <section style={card}>
@@ -262,11 +307,17 @@ export default function ConfigStep({ onGenerate }) {
             Difficulty mix
           </h2>
           <p style={{ margin: "5px 0 14px", fontSize: 13, color: "#64748B" }}>
-            A real paper carries all three. Share of the total.
+            {isCompetitive
+              ? "Competitive leans harder than a school paper. Share of total marks."
+              : "A real paper carries all three. Share of total marks."}
           </p>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 10 }}>
             {DIFFICULTIES.map((d) => {
-              const tone = { Easy: ["#ECFDF5", "#A7F3D0", "#065F46"], Medium: ["#FFFBEB", "#FDE68A", "#92400E"], Hard: ["#FEF2F2", "#FECACA", "#991B1B"] }[d];
+              const tone = {
+                Easy:   ["#ECFDF5", "#A7F3D0", "#065F46"],
+                Medium: ["#FFFBEB", "#FDE68A", "#92400E"],
+                Hard:   ["#FEF2F2", "#FECACA", "#991B1B"],
+              }[d];
               return (
                 <div key={d} style={{ background: tone[0], border: `1px solid ${tone[1]}`, borderRadius: 12, padding: "12px 14px" }}>
                   <label htmlFor={`mix-${d}`} style={{ display: "block", fontSize: 12, fontWeight: 600, color: tone[2], marginBottom: 7 }}>{d}</label>
@@ -295,7 +346,7 @@ export default function ConfigStep({ onGenerate }) {
             {!isCompetitive && (
               <button type="button" onClick={() => setRows(rowsForTestType(testType))}
                 style={{ padding: "6px 12px", borderRadius: 8, border: "1.5px solid #E2E8F0", background: "#fff", fontSize: 12, fontWeight: 600, color: "#475569", cursor: "pointer" }}>
-                Reset to {type.label} default
+                Reset to default
               </button>
             )}
           </div>
@@ -404,11 +455,26 @@ export default function ConfigStep({ onGenerate }) {
             border: `1px solid ${balanced ? "#A7F3D0" : "#FECACA"}`,
             color: balanced ? "#065F46" : "#991B1B",
           }}>
-            {balanced
-              ? `Matches the ${target} marks a ${type.label.toLowerCase()} carries.`
-              : `${total} marks, but a ${type.label.toLowerCase()} is out of ${target}. Adjust before generating.`}
+            {isCompetitive
+              ? `${qCount} question${qCount === 1 ? "" : "s"} × ${qMarks} mark${qMarks === 1 ? "" : "s"} = ${total} marks · ${minutes} minutes.`
+              : balanced
+              ? `Matches the ${target} marks a ${type.shortLabel} carries.`
+              : `${total} marks, but a ${type.shortLabel} is out of ${target}. Adjust before generating.`}
           </p>
         </section>
+
+        {totalRejected && (
+          <section style={{ background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 16, padding: "18px 20px" }}>
+            <h3 style={{ fontSize: 14, fontWeight: 700, margin: 0, color: "#78350F" }}>
+              {total} marks will not generate yet
+            </h3>
+            <p style={{ margin: "6px 0 0", fontSize: 13, lineHeight: 1.6, color: "#92400E" }}>
+              The AI service accepts only {ACCEPTED_TOTALS.join(", ")} marks for a competitive paper,
+              so this one fails before a question is written. Change the count, or pick a pattern that
+              lands on one of those. Raised with the AI team.
+            </p>
+          </section>
+        )}
 
         {unsupported.length > 0 && (
           <section style={{ background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 16, padding: "18px 20px" }}>
@@ -416,29 +482,42 @@ export default function ConfigStep({ onGenerate }) {
               {unsupported.length === 1 ? "One type is not generated yet" : `${unsupported.length} types are not generated yet`}
             </h3>
             <p style={{ margin: "6px 0 0", fontSize: 13, lineHeight: 1.6, color: "#92400E" }}>
-              {listOut(unsupported.map((r) => r.label))} will print as numbered headings with answer
-              space, so the paper is complete and the marks still add up. The AI fills them in the day the
-              service returns them — nothing to change here.
+              {listOut(unsupported.map((r) => r.label))} stay in the blueprint and come out as printed
+              headings with answer space, so the paper is complete and the marks still add up to {target}.
+              The AI fills them the day the service returns them — nothing to change here.
             </p>
           </section>
         )}
 
         <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
-          <button type="button" onClick={submit} disabled={!chapterId || !balanced}
+          <button type="button" onClick={submit} disabled={!ready}
             className="ai-gradient"
             style={{
               flex: "1 1 220px", minHeight: 48, padding: "14px 20px", border: 0, borderRadius: 12,
               color: "#fff", fontSize: 14, fontWeight: 700,
-              cursor: !chapterId || !balanced ? "not-allowed" : "pointer",
-              opacity: !chapterId || !balanced ? 0.5 : 1,
+              cursor: ready ? "pointer" : "not-allowed",
+              opacity: ready ? 1 : 0.5,
               boxShadow: "0 4px 16px rgba(99,102,241,0.35)",
             }}>
             Generate paper
           </button>
-          {!chapterId && (
-            <span style={{ fontSize: 12, color: "#94A3B8" }}>Pick a chapter first.</span>
+          <button type="button" onClick={() => onSaveBlueprint?.(buildConfig())} disabled={!balanced}
+            style={{
+              minHeight: 48, padding: "14px 20px", borderRadius: 12, fontSize: 13, fontWeight: 700,
+              border: "1.5px solid #E2E8F0", background: "#fff", color: "#475569",
+              cursor: balanced ? "pointer" : "not-allowed", opacity: balanced ? 1 : 0.5,
+            }}>
+            Save as blueprint
+          </button>
+          {!syllabusReady && (
+            <span style={{ fontSize: 12, color: "#94A3B8" }}>
+              Pick a class, subject and at least one chapter first.
+            </span>
           )}
         </div>
+        <p style={{ margin: 0, fontSize: 11.5, color: "#94A3B8" }}>
+          Saved blueprints appear below this screen next time, so a repeat paper takes two clicks.
+        </p>
       </div>
     </div>
   );

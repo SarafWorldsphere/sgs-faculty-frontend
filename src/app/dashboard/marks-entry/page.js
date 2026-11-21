@@ -60,7 +60,7 @@ function Field({ label, children }) {
 }
 
 export default function MarksEntryPage() {
-  const { user } = useAuth();
+  const { user, activeClass } = useAuth();
 
   const [students, setStudents] = useState([]);
   const [exams, setExams] = useState([]);
@@ -112,11 +112,23 @@ export default function MarksEntryPage() {
       .finally(() => setLoading(false));
   }, []);
 
-  // The teacher's own subject is the usual answer, so offer it rather than
-  // making them type it every time.
+  /* The subjects this teacher takes in the *selected* class.
+   *
+   * This used to seed from user.subject — the subject on the teacher record,
+   * which is their primary one and the same whichever class is selected. A
+   * teacher taking Science in 9-B and Social Studies in 8 switched to 8, saw
+   * "Science" still filled in, and the marks were written to the database
+   * against Science. The marks themselves were right; the subject was not.
+   */
+  // Memoised: a fresh array every render would re-run the effect below on
+  // every render rather than when the class actually changes.
+  const classSubjects = useMemo(() => activeClass?.subjects ?? [], [activeClass]);
+
   useEffect(() => {
-    if (!subject && user?.subject) setSubject(user.subject);
-  }, [user, subject]);
+    if (subject) return;
+    const fallback = classSubjects[0] || user?.subject;
+    if (fallback) setSubject(fallback);
+  }, [user, subject, classSubjects]);
 
   /* Suggest a title rather than making them invent one. CT marks are entered
      a subject at a time every week, so typing "Weekly Test — Maths" forty
@@ -306,8 +318,24 @@ export default function MarksEntryPage() {
             </select>
           </Field>
 
+          {/* A list where the teacher's subjects for this class are known, a
+              free text box where they are not. Typing the subject by hand is
+              how marks ended up filed under the wrong one; picking from the
+              assignments for the selected class cannot produce a subject the
+              teacher does not take. */}
           <Field label="Subject">
-            <input style={INPUT} value={subject} onChange={(e) => setSubject(e.target.value)} />
+            {classSubjects.length > 0 ? (
+              <select style={INPUT} value={subject} onChange={(e) => setSubject(e.target.value)}>
+                {!classSubjects.includes(subject) && subject && (
+                  <option value={subject}>{subject}</option>
+                )}
+                {classSubjects.map((s) => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </select>
+            ) : (
+              <input style={INPUT} value={subject} onChange={(e) => setSubject(e.target.value)} />
+            )}
           </Field>
 
           <Field label="Date">

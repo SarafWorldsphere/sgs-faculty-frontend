@@ -9,7 +9,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { fetchChapterDetail } from "@/lib/api";
+import { fetchChapterDetail, fetchChapterFiles } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import NoteForm from "@/components/notes/NoteForm";
 
@@ -41,6 +41,25 @@ export default function ChapterReaderPage() {
     };
     load();
   }, [id, user, authLoading]);
+
+  /* A chapter can have no text and still have study material: the text lives
+   * in chapter content, the PDFs are separate file records. Reading only the
+   * first meant "Read Chapter" said the chapter was empty while the same
+   * chapter's PDF was sitting under Study Material, openable from the list.
+   *
+   * Only fetched when there is no text, so chapters that do have content cost
+   * nothing extra. null = not looked yet, [] = looked and there is none.
+   */
+  const [material, setMaterial] = useState(null);
+
+  useEffect(() => {
+    if (!chapter || chapter.content) return;
+    let cancelled = false;
+    fetchChapterFiles(id)
+      .then((files) => { if (!cancelled) setMaterial(files || []); })
+      .catch(() => { if (!cancelled) setMaterial([]); });
+    return () => { cancelled = true; };
+  }, [chapter, id]);
 
   const title = chapter?.content_title || chapter?.chapter_name || "Chapter";
   const chapterLabel = chapter?.content_title || chapter?.chapter_name || "";
@@ -99,6 +118,32 @@ export default function ChapterReaderPage() {
                 style={{ color: "#334155", fontFamily: "var(--font-geist-sans, system-ui)" }}
               >
                 {chapter.content}
+              </div>
+            ) : material === null ? (
+              <p className="text-sm" style={{ color: "#94A3B8" }}>Loading study material…</p>
+            ) : material.length > 0 ? (
+              <div>
+                <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: "#6366F1" }}>
+                  Study Material
+                </p>
+                <ul className="flex flex-col gap-2">
+                  {material.map((f) => (
+                    <li key={f.file_id}>
+                      <a href={f.view_url} target="_blank" rel="noopener noreferrer"
+                        className="flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm font-medium transition-all"
+                        style={{ background: "#F8FAFC", border: "1px solid #E2E8F0", color: "#0F172A" }}>
+                        <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" style={{ color: "#6366F1" }}>
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8}
+                            d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                        </svg>
+                        <span className="truncate">{f.file_name}</span>
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+                <p className="text-xs mt-3" style={{ color: "#94A3B8" }}>
+                  This chapter has no typed text yet — opening the study material instead.
+                </p>
               </div>
             ) : (
               <p className="text-sm" style={{ color: "#94A3B8" }}>This chapter has no content yet.</p>

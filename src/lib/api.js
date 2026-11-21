@@ -38,6 +38,48 @@ function getToken() {
   return localStorage.getItem(TOKEN_KEY);
 }
 
+/**
+ * A sentence a teacher can read, from whatever shape the error arrived in.
+ *
+ * FastAPI returns `detail` as a string for a raised HTTPException, but as an
+ * *array of objects* for a validation failure — one per field, each with loc,
+ * msg and type. Passing that straight to new Error() produced the literal
+ * text "[object Object]" on screen, which told the teacher nothing and hid
+ * the real reason the paper would not generate.
+ */
+async function errorMessage(res) {
+  const fallback = `HTTP ${res.status}`;
+  let body;
+  try {
+    body = await res.json();
+  } catch {
+    return fallback;
+  }
+
+  const detail = body?.detail ?? body?.error ?? body?.message;
+  if (!detail) return fallback;
+  if (typeof detail === "string") return detail;
+
+  // Validation errors: "totalMarks: field required", joined.
+  if (Array.isArray(detail)) {
+    const parts = detail
+      .map((d) => {
+        if (typeof d === "string") return d;
+        const field = Array.isArray(d?.loc) ? d.loc.filter((p) => p !== "body").join(".") : "";
+        const msg = d?.msg || d?.message || "";
+        return [field, msg].filter(Boolean).join(": ");
+      })
+      .filter(Boolean);
+    if (parts.length) return parts.join("; ");
+  }
+
+  if (typeof detail === "object") {
+    const msg = detail.msg || detail.message || detail.error;
+    if (typeof msg === "string") return msg;
+  }
+  return fallback;
+}
+
 async function request(path, options = {}) {
   const token = getToken();
   const headers = {
@@ -58,14 +100,7 @@ async function request(path, options = {}) {
         window.location.href = LOGIN_URL;
       }
     }
-    let detail = `HTTP ${res.status}`;
-    try {
-      const body = await res.json();
-      detail = body.detail || detail;
-    } catch {
-      /* ignore */
-    }
-    const err = new Error(detail);
+    const err = new Error(await errorMessage(res));
     err.status = res.status;   // mark as an HTTP error so callers can distinguish from network errors
     throw err;
   }
@@ -236,7 +271,10 @@ export async function deleteNote(id) {
  * Fetch chapter list — GET /api/v1/chapters
  */
 export async function fetchChapters() {
-  const data = await request("/api/v1/chapters");
+  // Scoped to the class being worked in. Without it a teacher taking four
+  // classes got every chapter of all four in one list, and switching class in
+  // the header changed nothing.
+  const data = await request(withClass("/api/v1/chapters"));
   return data.chapters;
 }
 
@@ -292,12 +330,7 @@ async function uploadRequest(path, file, method = "POST") {
   });
 
   if (!res.ok) {
-    let detail = `HTTP ${res.status}`;
-    try {
-      const b = await res.json();
-      detail = b.detail || detail;
-    } catch { /* ignore */ }
-    const err = new Error(detail);
+    const err = new Error(await errorMessage(res));
     err.status = res.status;
     throw err;
   }
@@ -330,7 +363,95 @@ export async function fetchTeacherProfile() {
 
 /* ─── Question papers (auto test) ───────────────────────────────────────────
    Generated papers are not stored until the teacher saves one. Saved papers
-   are what Print and "Assign to students" work from. */
+   are what the two printouts work from. */
+
+/**
+ * Ask the AI for a paper.
+ *
+ * `config` is what the Configure screen produced. The whole of it is sent:
+ * the backend forwards what the AI service reads today and ignores the rest,
+ * so the screen can ship before the generator is rebuilt around blueprints.
+ */
+export async function generateQuestionPaper(config) {
+  const competitive = config.testType === "competitive";
+  return request(competitive ? "/api/v1/question-papers/generate-competitive"
+                             : "/api/v1/question-papers/generate", {
+    method: "POST",
+    body: JSON.stringify({
+      // What the backend accepts today. chapterId is the first chapter, so a
+      // single-chapter paper keeps working against the current endpoint while
+      // chapterIds waits on the AI service.
+      chapterId: config.chapterIds?.[0] ?? null,
+      difficulty: dominantDifficulty(config.difficultyMix),
+      totalMarks: config.totalMarks,
+      questionType: null,
+
+      // The new shape.
+      chapterIds: config.chapterIds ?? [],
+      examType: config.examType,
+      classLevel: config.classLevel,
+      subject: config.subject,
+      difficultyMix: config.difficultyMix,
+      blueprint: config.blueprint,
+      minutes: config.minutes,
+      negativeMarking: config.negativeMarking,
+      examTarget: config.examTarget,
+      questionCount: config.questionCount,
+      marksEach: config.marksEach,
+    }),
+  });
+}
+
+/**
+ * One replacement question, for Rewrite and Replace.
+ *
+ * Same type and same marks as the one it replaces, so the blueprint total
+ * never moves. The endpoint does not exist on the AI service yet; until it
+ * does this throws and the review screen says so, rather than silently
+ * leaving the question as it was.
+ */
+export async function regenerateQuestion({ type, marks, chapterIds, difficulty, exclude }) {
+  return request("/api/v1/question-papers/question", {
+    method: "POST",
+    body: JSON.stringify({ type, marks, chapterIds, difficulty, exclude: exclude ?? [] }),
+  });
+}
+
+/**
+ * Which question types the AI can write today.
+ *
+ * A missing endpoint is a normal answer — the caller falls back to the types
+ * the service has always returned — so this resolves null rather than throwing
+ * on a 404.
+ */
+export async function fetchQuestionTypeCapabilities() {
+  try {
+    const data = await request("/api/v1/question-papers/capabilities");
+    return Array.isArray(data?.questionTypes) ? data.questionTypes : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Hardest last, so a tie can be broken towards the harder level. */
+const DIFFICULTY_RANK = { Easy: 0, Medium: 1, Hard: 2 };
+
+/**
+ * The single difficulty to send to an API that only accepts one of them.
+ *
+ * The competitive mix is Easy 20 / Medium 40 / Hard 40, so the top two tie.
+ * Sorting on share alone left that tie to array order, which put Medium
+ * first — a competitive paper asked for at the same difficulty as a weekly
+ * test, with the Hard share on screen having no effect. Ties now go to the
+ * harder level, which is the safer way to be wrong about an exam paper.
+ */
+function dominantDifficulty(mix) {
+  if (!mix) return "Medium";
+  const ranked = Object.entries(mix).sort(
+    (a, b) => b[1] - a[1] || (DIFFICULTY_RANK[b[0]] ?? 0) - (DIFFICULTY_RANK[a[0]] ?? 0)
+  );
+  return ranked[0]?.[0] ?? "Medium";
+}
 
 export async function saveQuestionPaper(paper) {
   // paper: { title, chapterId, subject, difficulty, totalMarks, questionType, paperText | questions }
@@ -385,4 +506,36 @@ export async function fetchParentNotifications(studentId) {
 /** Who an assignment went to, with what each student submitted. */
 export async function fetchAssignmentStudents(assignmentId) {
   return request(withClass(`/api/v1/assignments/${assignmentId}/students`));
+}
+
+/* ── Parent conversations ────────────────────────────────────────────────────
+   The teacher's side of the Communication Centre. A parent starts a thread
+   about their child and addresses it to one teacher; these read it and reply.
+
+   Deliberately not class-scoped: a parent writes to a *teacher*, and that
+   teacher should see the thread whichever class the child is in. So no
+   withClass() here, unlike most of the calls above. */
+
+export async function fetchConversations() {
+  return request("/api/v1/conversations");
+}
+
+/** The full thread. Fetching it marks the parent's messages as read. */
+export async function fetchConversation(convId) {
+  return request(`/api/v1/conversations/${convId}`);
+}
+
+export async function replyToConversation(convId, message) {
+  return request(`/api/v1/conversations/${convId}/messages`, {
+    method: "POST",
+    body: JSON.stringify({ message }),
+  });
+}
+
+/** Every test in one subject for one month, with student-wise marks.
+ *  month is YYYY-MM; omit subject for every subject. */
+export async function fetchMonthlyMarks(month, subject) {
+  const qs = new URLSearchParams({ month });
+  if (subject && subject !== "all") qs.set("subject", subject);
+  return request(withClass(`/api/v1/assessments/monthly?${qs.toString()}`));
 }

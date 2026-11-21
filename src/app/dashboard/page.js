@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import Modal from "@/components/ui/Modal";
 import SubmissionsModal from "@/components/assignments/SubmissionsModal";
 import { withClass } from "@/lib/activeClass";
 import { useAuth } from "@/context/AuthContext";
@@ -16,6 +17,12 @@ function getDueDays(dueDateStr) {
   return diff;
 }
 
+// How many alert rows a card shows before it defers to "View all". Four fills
+// the card on a laptop; a phone fits three without the card running past the
+// fold and burying the one below it.
+const PREVIEW = 4;
+const PREVIEW_MOBILE = 3;
+
 function DueLabel({ days }) {
   if (days < 0)  return <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: "#FEF2F2", color: "#EF4444" }}>Overdue</span>;
   if (days === 0) return <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: "#FFF7ED", color: "#EA580C" }}>Due Today</span>;
@@ -30,6 +37,9 @@ export default function DashboardPage() {
   // #88: the card used to show only a count; clicking it now lists who
   // submitted and what they turned in.
   const [openAssignment, setOpenAssignment] = useState(null);
+  // "due" | "completion" | null — which alert card opened its full list.
+  const [listModal, setListModal] = useState(null);
+  const [listSearch, setListSearch] = useState("");
 
   useEffect(() => {
     const token = localStorage.getItem("swais_faculty_token");
@@ -53,6 +63,117 @@ export default function DashboardPage() {
   const formatDate = (dateStr) => {
     const date = new Date(dateStr);
     return date.toLocaleDateString("en-IN", { day: "numeric", month: "short" });
+  };
+
+  // Both alert cards used to render every assignment, so a teacher with twenty
+  // of them got forty cards stacked down the dashboard. They now show the few
+  // that need attention and hand the rest to a modal.
+  //
+  // Which few depends on the card: soonest due for one, most outstanding for
+  // the other. Completion Alerts previously rendered in whatever order the API
+  // returned, so the class with 2 of 40 submitted could sit below the ones
+  // already finished.
+  const dueSorted = [...assignments].sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
+  const completionSorted = [...assignments].sort(
+    (a, b) => (b.totalStudents - b.submittedCount) - (a.totalStudents - a.submittedCount)
+  );
+
+  // Closes the list first: the submissions view is itself a modal, and two of
+  // them stacked read as the app having lost its place.
+  const openSubmissions = (a) => {
+    setListModal(null);
+    setOpenAssignment({ id: a.id, title: a.title });
+  };
+
+  const dueRow = (a, className = "") => {
+    const days = getDueDays(a.dueDate);
+    const isUrgent = days <= 1;
+    return (
+      /* Opens the same submissions view as a Completion Alerts card.
+         These were the only assignment cards on the dashboard that
+         did nothing when clicked, which read as the view being
+         broken rather than as this list simply not being clickable. */
+      <div key={a.id}
+        role="button"
+        tabIndex={0}
+        onClick={() => openSubmissions(a)}
+        onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openSubmissions(a); } }}
+        title="View submissions"
+        className={`flex items-center justify-between gap-3 p-3.5 rounded-xl cursor-pointer transition-colors hover:bg-slate-50 ${className}`}
+        style={{
+          border: `1px solid ${isUrgent ? "rgba(239,68,68,0.2)" : "#E2E8F0"}`,
+          background: isUrgent ? "#FEF2F210" : "transparent",
+        }}>
+        <div className="min-w-0">
+          <p className="text-sm font-semibold truncate" style={{ color: "#0F172A" }}>{a.title}</p>
+          <p className="text-xs mt-0.5" style={{ color: "#94A3B8" }}>{a.subject} · {new Date(a.dueDate).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}</p>
+        </div>
+        <DueLabel days={days} />
+      </div>
+    );
+  };
+
+  const completionRow = (a, className = "") => {
+    const pct = Math.round((a.submittedCount / a.totalStudents) * 100);
+    const allDone = a.submittedCount === a.totalStudents;
+    const pendingCount = a.totalStudents - a.submittedCount;
+    return (
+      <div key={a.id}
+        role="button"
+        tabIndex={0}
+        onClick={() => openSubmissions(a)}
+        onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openSubmissions(a); } }}
+        title="View submissions"
+        className={`p-3.5 rounded-xl cursor-pointer transition-colors hover:bg-slate-50 ${className}`}
+        style={{ border: "1px solid #E2E8F0" }}>
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-sm font-semibold truncate" style={{ color: "#0F172A" }}>{a.title}</p>
+          {allDone ? (
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ml-2"
+              style={{ background: "#ECFDF5", color: "#10B981" }}>All Submitted ✓</span>
+          ) : (
+            <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full shrink-0 ml-2"
+              style={{ background: "#FFF7ED", color: "#D97706" }}>{pendingCount} pending</span>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: "#EEF2FF" }}>
+            <div className="h-full rounded-full transition-all duration-700"
+              style={{ width: `${pct}%`, background: allDone ? "#10B981" : "linear-gradient(90deg,#6366F1,#8B5CF6)" }} />
+          </div>
+          <span className="text-xs font-bold shrink-0" style={{ color: allDone ? "#10B981" : "#6366F1" }}>
+            {a.submittedCount}/{a.totalStudents}
+          </span>
+        </div>
+      </div>
+    );
+  };
+
+  // The first PREVIEW rows, with the ones past PREVIEW_MOBILE hidden on a
+  // phone. Done in CSS rather than by measuring the window: a JS width check
+  // renders the desktop count on the server and the phone count after
+  // hydration, which shows as a visible jump on every load.
+  const preview = (rows, render, hideClass) =>
+    rows.slice(0, PREVIEW).map((a, i) =>
+      render(a, i >= PREVIEW_MOBILE ? hideClass : "")
+    );
+
+  // Shown once anything is hidden. Between PREVIEW_MOBILE and PREVIEW only the
+  // phone is hiding rows, so on a laptop the button would point at a list the
+  // teacher can already see in full.
+  const viewAll = (rows, kind) => {
+    if (rows.length <= PREVIEW_MOBILE) return null;
+    return (
+      <button
+        type="button"
+        onClick={() => { setListSearch(""); setListModal(kind); }}
+        className={`w-full mt-1 py-2.5 rounded-xl text-xs font-semibold cursor-pointer transition-colors ${rows.length > PREVIEW ? "" : "sm:hidden"}`}
+        style={{ color: "#6366F1", background: "#EEF2FF" }}
+        onMouseEnter={e => e.currentTarget.style.background = "#E0E7FF"}
+        onMouseLeave={e => e.currentTarget.style.background = "#EEF2FF"}>
+        View all {rows.length} →
+      </button>
+    );
   };
 
   const stats = [
@@ -343,24 +464,8 @@ export default function DashboardPage() {
             {assignments.length === 0 && (
               <p className="text-sm text-center py-6" style={{ color: "#94A3B8" }}>No upcoming assignments.</p>
             )}
-            {[...assignments].sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate)).map(a => {
-              const days = getDueDays(a.dueDate);
-              const isUrgent = days <= 1;
-              return (
-                <div key={a.id}
-                  className="flex items-center justify-between gap-3 p-3.5 rounded-xl"
-                  style={{
-                    border: `1px solid ${isUrgent ? "rgba(239,68,68,0.2)" : "#E2E8F0"}`,
-                    background: isUrgent ? "#FEF2F210" : "transparent",
-                  }}>
-                  <div className="min-w-0">
-                    <p className="text-sm font-semibold truncate" style={{ color: "#0F172A" }}>{a.title}</p>
-                    <p className="text-xs mt-0.5" style={{ color: "#94A3B8" }}>{a.subject} · {new Date(a.dueDate).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}</p>
-                  </div>
-                  <DueLabel days={days} />
-                </div>
-              );
-            })}
+            {preview(dueSorted, dueRow, "hidden sm:flex")}
+            {viewAll(dueSorted, "due")}
           </div>
         </div>
 
@@ -390,44 +495,57 @@ export default function DashboardPage() {
             {assignments.length === 0 && (
               <p className="text-sm text-center py-6" style={{ color: "#94A3B8" }}>No submission data yet.</p>
             )}
-            {assignments.map(a => {
-              const pct = Math.round((a.submittedCount / a.totalStudents) * 100);
-              const allDone = a.submittedCount === a.totalStudents;
-              const pendingCount = a.totalStudents - a.submittedCount;
-              return (
-                <div key={a.id}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => setOpenAssignment({ id: a.id, title: a.title })}
-                  onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setOpenAssignment({ id: a.id, title: a.title }); } }}
-                  title="View submissions"
-                  className="p-3.5 rounded-xl cursor-pointer transition-colors hover:bg-slate-50"
-                  style={{ border: "1px solid #E2E8F0" }}>
-                  <div className="flex items-center justify-between mb-2">
-                    <p className="text-sm font-semibold truncate" style={{ color: "#0F172A" }}>{a.title}</p>
-                    {allDone ? (
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ml-2"
-                        style={{ background: "#ECFDF5", color: "#10B981" }}>All Submitted ✓</span>
-                    ) : (
-                      <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full shrink-0 ml-2"
-                        style={{ background: "#FFF7ED", color: "#D97706" }}>{pendingCount} pending</span>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: "#EEF2FF" }}>
-                      <div className="h-full rounded-full transition-all duration-700"
-                        style={{ width: `${pct}%`, background: allDone ? "#10B981" : "linear-gradient(90deg,#6366F1,#8B5CF6)" }} />
-                    </div>
-                    <span className="text-xs font-bold shrink-0" style={{ color: allDone ? "#10B981" : "#6366F1" }}>
-                      {a.submittedCount}/{a.totalStudents}
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
+            {preview(completionSorted, completionRow, "hidden sm:block")}
+            {viewAll(completionSorted, "completion")}
           </div>
         </div>
       </div>
+
+      {listModal && (() => {
+        const isDue = listModal === "due";
+        const rows  = isDue ? dueSorted : completionSorted;
+        const q     = listSearch.trim().toLowerCase();
+        const shown = q
+          ? rows.filter(a =>
+              (a.title || "").toLowerCase().includes(q) ||
+              (a.subject || "").toLowerCase().includes(q))
+          : rows;
+        return (
+          <Modal
+            isOpen
+            onClose={() => setListModal(null)}
+            title={isDue ? "Due Date Alerts" : "Completion Alerts"}
+            maxWidth="max-w-xl"
+          >
+            <p className="text-xs mb-4" style={{ color: "#94A3B8" }}>
+              {rows.length} assignments, {isDue ? "soonest due first" : "most pending first"}
+            </p>
+
+            {/* A search box under ten rows is a control nobody needs. */}
+            {rows.length > 10 && (
+              <input
+                value={listSearch}
+                onChange={e => setListSearch(e.target.value)}
+                placeholder="Search by title or subject…"
+                className="w-full mb-4 px-3 py-2.5 text-sm rounded-xl focus:outline-none transition-all"
+                style={{ border: "1.5px solid #E2E8F0", background: "white", color: "#0F172A" }}
+                onFocus={e => { e.target.style.border = "1.5px solid #6366F1"; e.target.style.boxShadow = "0 0 0 3px rgba(99,102,241,0.1)"; }}
+                onBlur={e  => { e.target.style.border = "1.5px solid #E2E8F0"; e.target.style.boxShadow = "none"; }}
+              />
+            )}
+
+            {shown.length === 0 ? (
+              <p className="text-sm text-center py-8" style={{ color: "#94A3B8" }}>
+                Nothing matches “{listSearch}”.
+              </p>
+            ) : (
+              <div className="space-y-2.5">
+                {shown.map(a => (isDue ? dueRow(a) : completionRow(a)))}
+              </div>
+            )}
+          </Modal>
+        );
+      })()}
 
       {openAssignment && (
         <SubmissionsModal

@@ -67,9 +67,49 @@ export default function ChaptersView() {
       );
     }
 
+    // Grouped by class and subject, in the order the backend sent them.
+    //
+    // One flat list was the complaint: a teacher taking several classes saw
+    // every chapter together with nothing saying which class or subject each
+    // belonged to, and two chapters called "Chapter 3" were indistinguishable.
+    // Headings do the organising; the chip on each card means a chapter is
+    // still identifiable once you have scrolled past its heading.
+    const groups = [];
+    const byKey = new Map();
+    for (const ch of chapters) {
+      const key = `${ch.class_id ?? "-"}|${ch.subject_id ?? "-"}`;
+      if (!byKey.has(key)) {
+        const group = {
+          key,
+          className: ch.class_name || null,
+          subjectName: ch.subject_name || null,
+          items: [],
+        };
+        byKey.set(key, group);
+        groups.push(group);
+      }
+      byKey.get(key).items.push(ch);
+    }
+
+    // Only worth a heading when there is more than one group. A teacher with
+    // a single class and subject should not be made to read a label that
+    // says what the whole screen already says.
+    const showHeadings = groups.length > 1;
+
     return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-      {chapters.map((ch) => {
+    <div className="flex flex-col gap-8">
+      {groups.map((group) => (
+        <section key={group.key}>
+          {showHeadings && (
+            <h3 className="text-xs font-bold uppercase tracking-wide mb-3" style={{ color: "#64748B" }}>
+              {[group.className, group.subjectName].filter(Boolean).join(" · ") || "Unassigned"}
+              <span className="ml-2 font-medium normal-case" style={{ color: "#94A3B8" }}>
+                {group.items.length} chapter{group.items.length === 1 ? "" : "s"}
+              </span>
+            </h3>
+          )}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+      {group.items.map((ch) => {
         const title = ch.content_title || ch.chapter_name || `Chapter ${ch.chapter_id}`;
         return (
           <Link
@@ -91,6 +131,11 @@ export default function ChaptersView() {
                 {ch.chapter_name && ch.content_title && ch.chapter_name !== ch.content_title && (
                   <p className="text-xs mt-0.5 truncate" style={{ color: "#94A3B8" }}>{ch.chapter_name}</p>
                 )}
+                {(ch.class_name || ch.subject_name) && (
+                  <p className="text-[11px] mt-1 truncate font-medium" style={{ color: "#6366F1" }}>
+                    {[ch.class_name, ch.subject_name].filter(Boolean).join(" · ")}
+                  </p>
+                )}
               </div>
             </div>
             <span className="inline-flex items-center gap-1.5 text-xs font-semibold self-start px-3 py-1.5 rounded-lg"
@@ -103,6 +148,9 @@ export default function ChaptersView() {
           </Link>
         );
       })}
+          </div>
+        </section>
+      ))}
     </div>
     );
   };

@@ -139,6 +139,26 @@ export function AuthProvider({ children }) {
     window.location.reload();
   }, []);
 
+  // Nothing stored means the primary class, which is what the backend uses
+  // when no class_id is sent.
+  const resolvedClassId =
+    activeClassId ??
+    (user?.classes ?? []).find((c) => c.is_primary)?.class_id ??
+    null;
+
+  /**
+   * The selected class itself, not just its id — it carries the sections and
+   * subjects the teacher takes in *that* class.
+   *
+   * Without this, screens fell back to user.subject and user.class, which are
+   * the teacher's primary assignment and never change. A teacher taking
+   * Science in 9-B and Social Studies in 8 saw "Science" after switching to 8,
+   * and marks entry saved against it — the marks went into the database under
+   * the wrong subject.
+   */
+  const activeClass =
+    (user?.classes ?? []).find((c) => c.class_id === resolvedClassId) ?? null;
+
   const value = {
     user,
     isAuthenticated: !!user,
@@ -148,12 +168,8 @@ export function AuthProvider({ children }) {
     logout,
     clearError,
     classes: user?.classes ?? [],
-    // Nothing stored means the primary class, which is what the backend uses
-    // when no class_id is sent.
-    activeClassId:
-      activeClassId ??
-      (user?.classes ?? []).find((c) => c.is_primary)?.class_id ??
-      null,
+    activeClassId: resolvedClassId,
+    activeClass,
     switchClass,
   };
 

@@ -1,9 +1,13 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import Pagination from "@/components/ui/Pagination";
 import { withClass } from "@/lib/activeClass";
 
 const API = process.env.NEXT_PUBLIC_API_BASE_URL;
+
+// Rows per page in the rankings table.
+const PER_PAGE = 12;
 
 /* ── helpers ─────────────────────────────────────── */
 function getGrade(pct) {
@@ -254,6 +258,7 @@ export default function ReportsPage() {
   const [report,          setReport]          = useState(null);
   const [isLoading,       setIsLoading]       = useState(true);
   const [search,          setSearch]          = useState("");
+  const [page,            setPage]            = useState(1);
   const [sortBy,          setSortBy]          = useState("rank");
   const [selectedStudent, setSelectedStudent] = useState(null);
   const [classAiText,     setClassAiText]     = useState(null);
@@ -321,6 +326,16 @@ export default function ReportsPage() {
     });
 
   const top3 = [...students].sort((a, b) => a.rank - b.rank).slice(0, 3);
+
+  // Twelve rows a page, over the filtered and sorted list so the page follows
+  // whichever order is on screen. The podium above stays put — it is a summary
+  // of the whole class, not the first three rows of this table.
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PER_PAGE));
+  const safePage   = Math.min(page, totalPages);
+  const visible    = filtered.slice((safePage - 1) * PER_PAGE, safePage * PER_PAGE);
+
+  // Searching or re-sorting rebuilds the list under the current page.
+  useEffect(() => { setPage(1); }, [search, sortBy]);
 
   const handleSelect = (s) => {
     setSelectedStudent(prev => prev?.student_id === s.student_id ? null : s);
@@ -467,7 +482,7 @@ export default function ReportsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.map(s => {
+                  {visible.map(s => {
                     // Ranks are still numbered 1..N when nobody has been
                     // assessed, so guard the medals on an actual score.
                     const isTop3    = s.rank <= 3 && s.total_assessed > 0;
@@ -529,9 +544,18 @@ export default function ReportsPage() {
             </div>
           </div>
 
-          <p className="text-xs text-right" style={{ color: "#94A3B8" }}>
-            Showing <span className="font-semibold" style={{ color: "#6366F1" }}>{filtered.length}</span> of {students.length} students
-          </p>
+          {filtered.length > 0 && (
+            <div className="bg-white rounded-2xl" style={{ border: "1px solid rgba(99,102,241,0.1)" }}>
+              <Pagination
+                page={safePage}
+                totalPages={totalPages}
+                total={filtered.length}
+                perPage={PER_PAGE}
+                onChange={setPage}
+                noun="students"
+              />
+            </div>
+          )}
         </>
       )}
     </div>

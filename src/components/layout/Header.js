@@ -8,8 +8,16 @@ import { useRouter } from "next/navigation";
 const API = process.env.NEXT_PUBLIC_API_BASE_URL;
 
 export default function Header({ onMenuToggle }) {
-  const { user, classes } = useAuth();
+  const { user, classes, activeClass } = useAuth();
   const router = useRouter();
+
+  /* A teacher can take more than one subject in the same class, so join them
+     rather than picking one. Falls back to the teacher record for anyone with
+     no class map rows, which is how it behaved before. */
+  const subjectLabel =
+    (activeClass?.subjects?.length ? activeClass.subjects.join(", ") : null) ||
+    user?.subject ||
+    null;
   const [notices, setNotices] = useState([]);
   // The bell used to show a permanent red dot whenever any announcement
   // existed. It now counts announcements newer than the last time this
@@ -72,11 +80,27 @@ export default function Header({ onMenuToggle }) {
             </svg>
           </button>
 
+          {/* The class selector sits outside the hidden block, on purpose.
+              Everything else here is context a teacher can do without on a
+              small screen; the selector is a control, and hiding it left a
+              teacher with two classes unable to switch at all on a phone —
+              which is most of them, most of the time. */}
+          {(classes?.length ?? 0) > 1 && (
+            <div className="sm:hidden">
+              <ClassSelector />
+            </div>
+          )}
+
           <div className="hidden sm:flex items-center gap-2.5 flex-wrap">
-            {user?.subject && (
+            {/* The subject the teacher takes in the *selected* class, not the
+                one on their teacher record. Those differ for anyone teaching
+                more than one class, and this chip sits beside the class
+                selector — showing the primary subject next to a different
+                class is what made marks go in under the wrong subject. */}
+            {subjectLabel && (
               <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold" style={{ background: "#EEF2FF", color: "#6366F1" }}>
                 <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse" />
-                {user.subject}
+                {subjectLabel}
               </span>
             )}
             {/* A teacher with several classes picks one here; everyone else sees
