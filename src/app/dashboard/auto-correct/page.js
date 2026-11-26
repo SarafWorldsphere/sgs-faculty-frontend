@@ -43,10 +43,27 @@ export default function AutoCorrectPage() {
   const [saveError,     setSaveError]     = useState("");
   const [savedFor,      setSavedFor]      = useState([]);   // student ids kept this sitting
 
+  /* Scanning an answer sheet.
+
+     `scanMode` is the teacher's intent, not a setting: direct_grade is an
+     unmarked paper, verify_teacher is one already marked in pen that she wants
+     checked. `audit` only ever holds something in the second case. */
+  const [sheets,        setSheets]        = useState([]);
+  const [scanMode,      setScanMode]      = useState("direct_grade");
+  const [scanning,      setScanning]      = useState(false);
+  const [scanError,     setScanError]     = useState("");
+  const [scanned,       setScanned]       = useState(null);  // { name, roll } off the cover sheet
+  const [audit,         setAudit]         = useState(null);
+  // Per-question marks the scanner already worked out, keyed by question id.
+  const [scanMarks,     setScanMarks]     = useState({});
+
   /* Marking happens one paper at a time, but a class belongs on one test row.
      The first save creates the assessment and hands back its id; every paper
      after it is added to the same one. */
+  // Authoritative for the save path: avoids a stale read when two students
+  // are saved in quick succession. `hasAssessment` mirrors it for rendering.
   const assessmentId = useRef(null);
+  const [hasAssessment, setHasAssessment] = useState(false);
 
   const handleUploadPdf = async (e) => {
     const file = e.target.files?.[0];
@@ -76,6 +93,120 @@ export default function AutoCorrectPage() {
     } finally {
       setUploading(false);
       e.target.value = "";   // allow re-uploading the same file
+    }
+  };
+
+  /* The scanner's field names are read defensively.
+
+     The scanner answers with three parts: student_details, summary, and a
+     questions array. Those names are taken from its controller, not guessed —
+     an earlier draft read `transcription` and `detected_name` at the top level
+     and would have shown a paper of empty answers, which looks like an OCR
+     failure rather than the mapping mistake it is. */
+  const scanRowId = (row, i) => String(row?.question_number ?? i + 1);
+
+  /**
+   * Read the paper, then let the teacher check it.
+   *
+   * A vision model reading handwriting is a suggestion, so the transcribed
+   * answers land in step 2 as editable text rather than going straight to a
+   * mark. Where she would have typed each answer, she now reads what the
+   * scanner made of it and fixes anything it misread. A misread costs an edit
+   * instead of a wrong mark on a student's record.
+   *
+   * The scanner also returns a mark per question, so those are kept. Sending
+   * the same answers back through /check would pay for a second AI call and
+   * could return a different number for the same work, which is impossible to
+   * explain to a teacher. Its marks stand unless she edits the answer.
+   */
+  const handleScan = async () => {
+    if (!sheets.length || scanning) return;
+    setScanning(true);
+    setScanError("");
+    setAudit(null);
+    try {
+      const fd = new FormData();
+      sheets.forEach(file => fd.append("answer_sheets", file));
+      fd.append("mode", scanMode);
+      if (questions.length) {
+        fd.append("question_paper_json", JSON.stringify(questions));
+        fd.append("max_marks", String(totalMarks));
+      }
+      if (selectedTopic) fd.append("subject", selectedTopic);
+      const student = students.find(s => String(s.student_id) === String(selectedStudent));
+      if (student) {
+        fd.append("student_name", student.full_name || "");
+        if (student.roll_no) fd.append("roll_number", String(student.roll_no));
+      }
+
+      const token = getToken();
+      const res = await fetch(`${API}/api/v1/corrections/scan`, {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: fd,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.detail || `HTTP ${res.status}`);
+
+      const rows = Array.isArray(data?.questions) ? data.questions : [];
+      if (!rows.length) {
+        setScanError("Nothing could be read from those pages. Try a flatter scan in better light.");
+        return;
+      }
+
+      // An uploaded question paper is the authority on wording and marks. Only
+      // when there is none do the rows come from what the scanner matched.
+      if (!questions.length) {
+        setQuestions(rows.map((row, i) => {
+          const marks = Number(row.max_marks) || 1;
+          return {
+            id: scanRowId(row, i),
+            question: row.question_text || `Question ${i + 1}`,
+            maxMarks: marks,
+            type: marks > 3 ? "long" : "short",
+          };
+        }));
+      }
+
+      const marked = {};
+      setAnswers(prev => {
+        const next = { ...prev };
+        rows.forEach((row, i) => {
+          const id = scanRowId(row, i);
+          if (row.transcribed_answer != null) next[id] = String(row.transcribed_answer);
+          marked[id] = {
+            marks: Number(row.ai_evaluated_marks) || 0,
+            teacherMarks: row.teacher_awarded_marks,
+            feedback: row.feedback || row.step_wise_breakdown || "",
+            breakdown: row.step_wise_breakdown || "",
+            flagged: Boolean(row.discrepancy_flag),
+            reason: row.discrepancy_reason || "",
+            answer: row.transcribed_answer == null ? "" : String(row.transcribed_answer),
+          };
+        });
+        return next;
+      });
+      setScanMarks(marked);
+
+      const who = data.student_details || {};
+      setScanned({ name: who.detected_name || "", roll: who.detected_roll_no || "" });
+
+      const sum = data.summary || {};
+      if (scanMode === "verify_teacher") {
+        setAudit({
+          status: sum.audit_status,
+          totallingError: Boolean(sum.totaling_error_detected),
+          aiTotal: sum.ai_total_marks,
+          teacherTotal: sum.calculated_teacher_sum ?? sum.teacher_written_total,
+          difference: sum.score_difference,
+        });
+      }
+
+      setStep(2);
+    } catch (err) {
+      setScanError(err.message || "Could not read the answer sheet. Please try again.");
+    } finally {
+      setScanning(false);
     }
   };
 
@@ -126,6 +257,7 @@ export default function AutoCorrectPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data?.detail || `Error ${res.status}`);
       assessmentId.current = data.assessment_id;
+      setHasAssessment(Boolean(data.assessment_id));
       setSavedFor(prev => [...prev, String(selectedStudent)]);
     } catch (err) {
       setSaveError(err.message || "Could not save this result.");
@@ -144,6 +276,26 @@ export default function AutoCorrectPage() {
       const token = getToken();
       const corrected = await Promise.all(
         questions.map(async (q) => {
+          // The scanner already marked this one, and the teacher did not
+          // change what it read. Sending the same answer back would pay for a
+          // second opinion on work already judged, and a different number for
+          // identical text is not something anyone can explain to a teacher.
+          const scored = scanMarks[q.id];
+          if (scored && scored.answer === (answers[q.id] ?? "")) {
+            return {
+              question_id: q.id,
+              question: q.question,
+              answer: answers[q.id] || "(no answer)",
+              marks_awarded: scored.marks,
+              max_marks: q.maxMarks,
+              feedback: scored.feedback || "No feedback returned.",
+              breakdown: scored.breakdown,
+              flagged: scored.flagged,
+              reason: scored.reason,
+              teacher_marks: scored.teacherMarks,
+              is_correct: scored.marks === q.maxMarks,
+            };
+          }
           try {
             const res = await fetch(`${API}/api/v1/corrections/check`, {
               method: "POST",
@@ -193,6 +345,13 @@ export default function AutoCorrectPage() {
     setSaveError("");
     setAnswers({});
     setResults(null);
+    // The next paper is a different student's. Leaving the scan behind would
+    // carry one student's transcription and marking check onto the next.
+    setSheets([]);
+    setScanned(null);
+    setAudit(null);
+    setScanError("");
+    setScanMarks({});
   };
 
   return (
@@ -330,6 +489,62 @@ export default function AutoCorrectPage() {
             </div>
           )}
 
+          {/* Answer sheet — optional. Without it the teacher types the answers
+              in, exactly as before; with it the scanner transcribes them and
+              she corrects what it got wrong. */}
+          <div>
+            <label className="text-xs font-semibold block mb-2" style={{ color: "#64748B" }}>
+              Answer Sheet <span className="font-normal" style={{ color: "#94A3B8" }}>— optional, scan or photo</span>
+            </label>
+
+            <div className="flex gap-2 mb-2.5">
+              {[
+                { id: "direct_grade",   label: "Not yet marked" },
+                { id: "verify_teacher", label: "Already marked — check it" },
+              ].map(option => (
+                <button key={option.id} type="button" onClick={() => setScanMode(option.id)}
+                  className="flex-1 py-2 px-3 rounded-xl text-xs font-semibold cursor-pointer transition-all"
+                  style={{
+                    background: scanMode === option.id ? "#EEF2FF" : "#F8FAFC",
+                    border: `1px solid ${scanMode === option.id ? "#6366F1" : "#E2E8F0"}`,
+                    color: scanMode === option.id ? "#6366F1" : "#64748B",
+                  }}>
+                  {option.label}
+                </button>
+              ))}
+            </div>
+
+            <label className="flex items-center justify-center gap-2 w-full py-4 rounded-xl cursor-pointer transition-all text-sm font-semibold"
+              style={{ border: "1.5px dashed #C7D2FE", color: "#6366F1", background: "#F8FAFC" }}>
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                  d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+              {sheets.length
+                ? `${sheets.length} page${sheets.length > 1 ? "s" : ""} selected — replace`
+                : "Upload answer sheet (PDF or photo)"}
+              <input type="file" multiple accept="application/pdf,image/jpeg,image/png,image/webp"
+                className="hidden"
+                onChange={e => { setSheets(Array.from(e.target.files || [])); setScanError(""); }}
+                disabled={scanning} />
+            </label>
+
+            {sheets.length > 0 && (
+              <button onClick={handleScan} disabled={scanning}
+                className="w-full mt-2.5 py-2.5 rounded-xl text-sm font-semibold text-white cursor-pointer transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{ background: "linear-gradient(135deg,#10B981,#06B6D4)" }}>
+                {scanning ? "Reading the handwriting…" : "Read answer sheet →"}
+              </button>
+            )}
+            {scanning && (
+              <p className="text-xs mt-2" style={{ color: "#94A3B8" }}>
+                A multi-page paper can take a minute or two.
+              </p>
+            )}
+            {scanError && <p className="text-xs mt-2" style={{ color: "#EF4444" }}>{scanError}</p>}
+          </div>
+
           <button onClick={() => setStep(2)} disabled={questions.length === 0}
             className="w-full py-3 rounded-xl text-sm font-semibold text-white cursor-pointer transition-all disabled:opacity-50 disabled:cursor-not-allowed"
             style={{ background: "linear-gradient(135deg,#6366F1,#8B5CF6)" }}>
@@ -341,6 +556,24 @@ export default function AutoCorrectPage() {
       {/* Step 2: Enter Answers */}
       {step === 2 && (
         <div className="space-y-4">
+
+          {/* Said plainly, because a teacher who trusts the transcription
+              without reading it is the one way this puts a wrong mark on a
+              student's record. */}
+          {scanned !== null && (
+            <div className="rounded-2xl p-4" style={{ background: "#FFFBEB", border: "1px solid #FDE68A" }}>
+              <p className="text-sm font-semibold" style={{ color: "#92400E" }}>
+                These answers were read off the scan — please check them before grading.
+              </p>
+              {(scanned.name || scanned.roll) && (
+                <p className="text-xs mt-1" style={{ color: "#B45309" }}>
+                  Cover sheet reads{scanned.name ? ` ${scanned.name}` : ""}
+                  {scanned.roll ? `, roll no ${scanned.roll}` : ""}. Confirm the student selected above matches.
+                </p>
+              )}
+            </div>
+          )}
+
           {questions.map((q, idx) => (
             <div key={q.id} className="bg-white rounded-2xl p-5"
               style={{ border: "1px solid rgba(99,102,241,0.1)" }}>
@@ -430,6 +663,55 @@ export default function AutoCorrectPage() {
             </div>
           </div>
 
+          {/* Checking the teacher's own marking.
+
+              Only in verify_teacher mode, and deliberately framed as a second
+              opinion rather than a verdict: the scanner is reading pen marks
+              off a photograph, and a disagreement is a prompt to look again,
+              not proof that the teacher was wrong. */}
+          {audit && (
+            <div className="bg-white rounded-2xl p-5" style={{ border: "1px solid rgba(99,102,241,0.1)" }}>
+              <div className="flex items-start justify-between gap-3 mb-3">
+                <h3 className="text-sm font-bold" style={{ color: "#0F172A" }}>Marking check</h3>
+                {audit.status && (
+                  <span className="text-xs font-bold px-2.5 py-1 rounded-full"
+                    style={
+                      audit.status === "accurate"
+                        ? { background: "#ECFDF5", color: "#10B981" }
+                        : { background: "#FFFBEB", color: "#B45309" }
+                    }>
+                    {String(audit.status).replace(/_/g, " ")}
+                  </span>
+                )}
+              </div>
+
+              <div className="grid grid-cols-3 gap-3 text-center">
+                {[
+                  { label: "On the paper", value: audit.teacherTotal },
+                  { label: "Scanner's total", value: audit.aiTotal },
+                  { label: "Difference", value: audit.difference },
+                ].map(cell => (
+                  <div key={cell.label} className="p-3 rounded-xl" style={{ background: "#F8FAFC" }}>
+                    <p className="text-lg font-bold" style={{ color: "#0F172A" }}>
+                      {cell.value ?? "—"}
+                    </p>
+                    <p className="text-xs" style={{ color: "#94A3B8" }}>{cell.label}</p>
+                  </div>
+                ))}
+              </div>
+
+              {audit.totallingError && (
+                <p className="text-xs mt-3 p-3 rounded-xl" style={{ background: "#FEF2F2", color: "#B91C1C" }}>
+                  The marks written on the paper do not add up to the total on the front page.
+                </p>
+              )}
+
+              <p className="text-xs mt-3" style={{ color: "#94A3B8" }}>
+                A second opinion, not a correction. Check the paper yourself before changing a mark.
+              </p>
+            </div>
+          )}
+
           {/* Keeping the result. Only a named student can have a mark, so the
               class-wide mode explains itself rather than offering a dead button. */}
           <div className="bg-white rounded-2xl p-5" style={{ border: "1px solid rgba(99,102,241,0.1)" }}>
@@ -453,7 +735,7 @@ export default function AutoCorrectPage() {
                     Save {results.total} / {results.max} for this student
                   </p>
                   <p className="text-xs mt-0.5" style={{ color: "#94A3B8" }}>
-                    {assessmentId.current
+                    {hasAssessment
                       ? "Added to the test you started this sitting."
                       : "Creates the test; the next student joins the same one."}
                   </p>
