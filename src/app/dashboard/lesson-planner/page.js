@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { todayISO } from "@/lib/dates";
 import ChapterPicker from "@/components/chapters/ChapterPicker";
+import CurrentTopicCard from "@/components/planner/CurrentTopicCard";
 
 const API = process.env.NEXT_PUBLIC_API_BASE_URL;
 
@@ -593,6 +594,14 @@ export default function LessonPlannerPage() {
             </div>
 
             {/* Class / Subject / Chapter */}
+            <CurrentTopicCard
+              onUse={({ topicName, periods: plannedPeriods, chapterId }) => {
+                setTopic(topicName);
+                if (plannedPeriods) setPeriods(plannedPeriods);
+                if (chapterId) { setChapter(String(chapterId)); setChapterName(topicName); }
+              }}
+            />
+
             <div>
               <label className="block text-xs font-semibold mb-1.5" style={{ color: "#475569" }}>Class / Subject / Chapter *</label>
               <ChapterPicker onChapterChange={(id, name) => { setChapter(id ? String(id) : ""); setChapterName(name); }} />

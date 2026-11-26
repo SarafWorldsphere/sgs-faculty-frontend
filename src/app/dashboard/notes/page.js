@@ -29,8 +29,15 @@ export default function NotesChaptersPage() {
 
   const switchTab = (key) => {
     setTab(key);
-    // keep the URL in sync without a full navigation
-    window.history.replaceState(null, "", `/dashboard/notes?tab=${key}`);
+    /* Keep the URL in sync without a full navigation.
+     *
+     * The path comes from window.location, not a literal: next.config sets
+     * basePath '/faculty', so this page is served at /faculty/dashboard/notes.
+     * Writing "/dashboard/notes" here dropped that prefix from the address
+     * bar, and the next full page load — switching class calls
+     * window.location.reload() — asked the server for a path nginx does not
+     * route, which answered 404. */
+    window.history.replaceState(null, "", `${window.location.pathname}?tab=${key}`);
   };
 
   return (

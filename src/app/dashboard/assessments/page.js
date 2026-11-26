@@ -1,8 +1,31 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
+import { fetchMonthlyMarks } from "@/lib/api";
+import { withClass } from "@/lib/activeClass";
 
 const API = process.env.NEXT_PUBLIC_API_BASE_URL;
+
+const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                     "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** "2026-11" -> "Nov 2026" */
+function monthLabel(value) {
+  const [y, m] = String(value || "").split("-");
+  const name = MONTH_NAMES[Number(m) - 1];
+  return name ? `${name} ${y}` : value;
+}
+
+/** The last 12 months, newest first — enough to cover a school year's reporting. */
+function recentMonths(count = 12) {
+  const out = [];
+  const d = new Date();
+  for (let i = 0; i < count; i++) {
+    out.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+    d.setMonth(d.getMonth() - 1);
+  }
+  return out;
+}
 
 const TYPE_CONFIG = {
   quiz:       { label: "Quiz",       bg: "#F5F3FF", color: "#8B5CF6", dot: "#8B5CF6" },
@@ -65,10 +88,19 @@ function AvgPill({ avg, max }) {
 }
 
 /* ── Result Drawer (with star, at-risk, distribution) ─────────── */
-function ResultDrawer({ assessment, onClose }) {
+function ResultDrawer({ assessment, onClose, onSaved }) {
   const [detail, setDetail]   = useState(null);
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState(null);
+
+  // Correcting marks after they are saved. The backend has always accepted
+  // this (PUT /assessments/{id}/marks, and it takes only the students that
+  // changed) — the drawer was read-only, so a mis-keyed mark could not be
+  // fixed from the app at all.
+  const [editing,   setEditing]   = useState(false);
+  const [drafts,    setDrafts]    = useState({});   // student_id -> { marks, absent }
+  const [saving,    setSaving]    = useState(false);
+  const [saveError, setSaveError] = useState(null);
 
   useEffect(() => {
     const token = localStorage.getItem("swais_faculty_token");
@@ -77,7 +109,9 @@ function ResultDrawer({ assessment, onClose }) {
       setLoading(false);
       return;
     }
-    fetch(`${API}/api/v1/assessments/${assessment.assessment_id}`,
+    // withClass, like every other screen. Without the class the backend skips
+    // its filter entirely and answers for all of the teacher's classes at once.
+    fetch(`${API}${withClass(`/api/v1/assessments/${assessment.assessment_id}`)}`,
       { headers: { Authorization: `Bearer ${token}` } })
       .then(async (r) => {
         if (!r.ok) {
@@ -114,6 +148,99 @@ function ResultDrawer({ assessment, onClose }) {
     };
   }, [detail]);
 
+  const maxMarks = Number(detail?.max_marks ?? assessment.max_marks);
+
+  function startEdit() {
+    const seed = {};
+    (detail?.results || []).forEach((r) => {
+      seed[r.student_id] = {
+        marks:  r.marks_obtained === null || r.marks_obtained === undefined ? "" : String(r.marks_obtained),
+        absent: !!r.is_absent,
+      };
+    });
+    setDrafts(seed);
+    setSaveError(null);
+    setEditing(true);
+  }
+
+  function cancelEdit() {
+    setEditing(false);
+    setDrafts({});
+    setSaveError(null);
+  }
+
+  function setDraft(studentId, patch) {
+    setDrafts((d) => ({ ...d, [studentId]: { ...d[studentId], ...patch } }));
+  }
+
+  // Only the rows the teacher actually touched are sent. The endpoint updates
+  // exactly what it receives, so sending the whole class would rewrite rows
+  // nobody edited and move their updated_at for no reason.
+  const changed = useMemo(() => {
+    if (!editing) return [];
+    return (detail?.results || []).filter((r) => {
+      const d = drafts[r.student_id];
+      if (!d) return false;
+      const was = r.marks_obtained === null || r.marks_obtained === undefined ? "" : String(r.marks_obtained);
+      return d.absent !== !!r.is_absent || (d.marks ?? "") !== was;
+    });
+  }, [editing, drafts, detail]);
+
+  // Mirrors the backend's own rule, so a teacher sees the problem before the
+  // request rather than as a 400.
+  const invalid = useMemo(() => {
+    if (!editing) return [];
+    return Object.entries(drafts).filter(([, d]) => {
+      if (d.absent) return false;
+      if (d.marks === "" || d.marks === undefined) return false;
+      const v = parseFloat(d.marks);
+      return Number.isNaN(v) || v < 0 || v > maxMarks;
+    });
+  }, [editing, drafts, maxMarks]);
+
+  async function saveEdits() {
+    if (!changed.length || invalid.length) return;
+    setSaving(true);
+    setSaveError(null);
+
+    const token = localStorage.getItem("swais_faculty_token");
+    const marks = changed.map((r) => {
+      const d = drafts[r.student_id];
+      return {
+        student_id:     r.student_id,
+        is_absent:      !!d.absent,
+        marks_obtained: d.absent || d.marks === "" || d.marks === undefined ? null : parseFloat(d.marks),
+      };
+    });
+
+    try {
+      const res = await fetch(`${API}/api/v1/assessments/${assessment.assessment_id}/marks`, {
+        method:  "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ marks }),
+      });
+      if (!res.ok) {
+        const b = await res.json().catch(() => ({}));
+        throw new Error(b.detail || `Could not save (HTTP ${res.status})`);
+      }
+      // The response is the whole assessment with recomputed average and
+      // submitted count, so the drawer and the card behind it both refresh
+      // from one source rather than guessing at the new totals.
+      const updated = await res.json();
+      setDetail(updated);
+      setEditing(false);
+      setDrafts({});
+      onSaved?.(updated);
+    } catch (err) {
+      setSaveError(err?.message || "Could not save the corrections.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex">
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
@@ -149,12 +276,14 @@ function ResultDrawer({ assessment, onClose }) {
             </button>
           </div>
 
-          {/* Meta pills */}
+          {/* Meta pills — read from `detail` once it has loaded, so a
+              correction updates the submitted count and average in place
+              instead of showing the figures the list was opened with. */}
           <div className="flex flex-wrap gap-2 mt-3">
             {[
-              { label: "Max Marks", value: assessment.max_marks },
-              { label: "Submitted", value: `${assessment.submitted}/${assessment.total_students}` },
-              { label: "Avg Score", value: assessment.class_average ?? "—", highlight: true },
+              { label: "Max Marks", value: maxMarks },
+              { label: "Submitted", value: `${(detail ?? assessment).submitted}/${(detail ?? assessment).total_students}` },
+              { label: "Avg Score", value: (detail ?? assessment).class_average ?? "—", highlight: true },
             ].map(m => (
               <div key={m.label} className="px-3 py-1.5 rounded-lg text-xs"
                 style={{
@@ -167,6 +296,29 @@ function ResultDrawer({ assessment, onClose }) {
               </div>
             ))}
           </div>
+
+          {/* Correct marks — only once there is something to correct. */}
+          {!loading && (detail?.results?.length ?? 0) > 0 && (
+            <div className="mt-3">
+              {editing ? (
+                <button onClick={cancelEdit} disabled={saving}
+                  className="text-xs font-semibold px-3 py-1.5 rounded-lg cursor-pointer transition-all"
+                  style={{ background: "#F8FAFC", color: "#64748B", border: "1px solid #E2E8F0", opacity: saving ? 0.6 : 1 }}>
+                  Cancel
+                </button>
+              ) : (
+                <button onClick={startEdit}
+                  className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg cursor-pointer transition-all"
+                  style={{ background: "#EEF2FF", color: "#6366F1", border: "1px solid #C7D2FE" }}>
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                      d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                  </svg>
+                  Correct marks
+                </button>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Body */}
@@ -242,10 +394,23 @@ function ResultDrawer({ assessment, onClose }) {
                 </thead>
                 <tbody>
                   {detail?.results?.map((r) => {
-                    const grade = getGrade(r.percentage);
+                    const d = editing ? drafts[r.student_id] : null;
+
+                    // While editing, the percentage and grade follow what the
+                    // teacher has typed, so they can see the effect of a
+                    // correction before saving it.
+                    const livePct = d
+                      ? (d.absent || d.marks === "" || d.marks === undefined || Number.isNaN(parseFloat(d.marks))
+                          ? null
+                          : Math.round((parseFloat(d.marks) / maxMarks) * 10000) / 100)
+                      : r.percentage;
+
+                    const grade = getGrade(livePct);
                     const gs = GRADE_STYLE[grade];
-                    const isStar    = star?.result_id   === r.result_id;
-                    const isAtRisk  = atRisk?.result_id === r.result_id && !isStar;
+                    const isStar    = !editing && star?.result_id   === r.result_id;
+                    const isAtRisk  = !editing && atRisk?.result_id === r.result_id && !isStar;
+                    const bad = d && !d.absent && d.marks !== "" && d.marks !== undefined &&
+                                (Number.isNaN(parseFloat(d.marks)) || parseFloat(d.marks) < 0 || parseFloat(d.marks) > maxMarks);
                     return (
                       <tr key={r.result_id}
                         style={{
@@ -263,12 +428,38 @@ function ResultDrawer({ assessment, onClose }) {
                           </span>
                         </td>
                         <td className="px-4 py-2.5 text-right">
-                          {r.marks_obtained !== null
-                            ? <span className="font-semibold" style={{ color: "#0F172A" }}>{r.marks_obtained}</span>
-                            : <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: "#FEF2F2", color: "#EF4444" }}>Absent</span>}
+                          {editing ? (
+                            <div className="flex items-center justify-end gap-2">
+                              <input
+                                type="number" min="0" max={maxMarks} step="0.01"
+                                value={d?.marks ?? ""}
+                                disabled={d?.absent || saving}
+                                onChange={(ev) => setDraft(r.student_id, { marks: ev.target.value })}
+                                aria-label={`Marks for ${r.student_name}`}
+                                className="w-20 px-2 py-1 rounded-lg text-right text-sm font-semibold"
+                                style={{
+                                  background: d?.absent ? "#F8FAFC" : "#FFFFFF",
+                                  color: "#0F172A",
+                                  border: "1px solid",
+                                  borderColor: bad ? "rgba(239,68,68,0.6)" : "#E2E8F0",
+                                }} />
+                              <label className="inline-flex items-center gap-1 text-[10px] font-semibold cursor-pointer"
+                                style={{ color: d?.absent ? "#EF4444" : "#94A3B8" }}>
+                                <input type="checkbox" checked={!!d?.absent} disabled={saving}
+                                  onChange={(ev) => setDraft(r.student_id, { absent: ev.target.checked })} />
+                                Abs
+                              </label>
+                            </div>
+                          ) : r.is_absent ? (
+                            <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: "#FEF2F2", color: "#EF4444" }}>Absent</span>
+                          ) : r.marks_obtained !== null && r.marks_obtained !== undefined ? (
+                            <span className="font-semibold" style={{ color: "#0F172A" }}>{r.marks_obtained}</span>
+                          ) : (
+                            <span className="text-xs" style={{ color: "#94A3B8" }}>Not entered</span>
+                          )}
                         </td>
                         <td className="px-4 py-2.5 text-right text-xs" style={{ color: "#64748B" }}>
-                          {r.percentage !== null ? `${r.percentage}%` : "—"}
+                          {livePct !== null && livePct !== undefined ? `${livePct}%` : "—"}
                         </td>
                         <td className="px-4 py-2.5 text-center">
                           <span className="px-2 py-0.5 rounded-full text-xs font-bold"
@@ -282,6 +473,38 @@ function ResultDrawer({ assessment, onClose }) {
             </>
           )}
         </div>
+
+        {/* Save bar — only while correcting. Outside the scrolling body so it
+            stays reachable with a long class list. */}
+        {editing && (
+          <div className="px-5 py-4" style={{ borderTop: "1px solid rgba(99,102,241,0.12)", background: "#FFFFFF" }}>
+            {saveError && (
+              <p className="text-xs mb-2" style={{ color: "#EF4444" }}>{saveError}</p>
+            )}
+            {invalid.length > 0 && (
+              <p className="text-xs mb-2" style={{ color: "#EF4444" }}>
+                {invalid.length} {invalid.length === 1 ? "mark is" : "marks are"} outside 0 to {maxMarks}.
+              </p>
+            )}
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-xs" style={{ color: "#94A3B8" }}>
+                {changed.length === 0
+                  ? "No changes yet"
+                  : `${changed.length} ${changed.length === 1 ? "student" : "students"} changed`}
+              </span>
+              <button onClick={saveEdits}
+                disabled={saving || !changed.length || invalid.length > 0}
+                className="text-sm font-semibold px-4 py-2 rounded-xl cursor-pointer transition-all"
+                style={{
+                  background: (!changed.length || invalid.length) ? "#E2E8F0" : "#6366F1",
+                  color:      (!changed.length || invalid.length) ? "#94A3B8" : "#FFFFFF",
+                  cursor:     (saving || !changed.length || invalid.length) ? "not-allowed" : "pointer",
+                }}>
+                {saving ? "Saving…" : "Save corrections"}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       <style>{`
@@ -303,6 +526,33 @@ export default function AssessmentsPage() {
   const [typeFilter,     setTypeFilter]     = useState("all");
   const [subjectFilter,  setSubjectFilter]  = useState("all");
 
+  /* Two ways to read the same marks. "By test" is the existing list — how the
+     class did on one paper. "By student" answers the question a parent meeting
+     starts from: how is this child doing in this subject this month, across
+     every test. Editing stays in the per-test drawer, which both views open. */
+  const [view,     setView]     = useState("test");   // "test" | "student"
+  const [month,    setMonth]    = useState(() => new Date().toISOString().slice(0, 7));
+  const [monthly,  setMonthly]  = useState(null);     // { forKey, data } | { forKey, error }
+
+  const monthKey = `${month}|${subjectFilter}`;
+
+  useEffect(() => {
+    if (view !== "student") return;
+    let cancelled = false;
+    fetchMonthlyMarks(month, subjectFilter)
+      .then((d) => { if (!cancelled) setMonthly({ forKey: monthKey, data: d }); })
+      .catch((e) => {
+        if (!cancelled) {
+          setMonthly({ forKey: monthKey, error: e?.message || "Could not load the month's marks." });
+        }
+      });
+    return () => { cancelled = true; };
+  }, [view, month, subjectFilter, monthKey]);
+
+  const monthReady   = monthly && monthly.forKey === monthKey;
+  const monthlyData  = monthReady ? monthly.data : null;
+  const monthlyError = monthReady ? monthly.error : null;
+
   useEffect(() => {
     const token = localStorage.getItem("swais_faculty_token");
     if (!token) {
@@ -310,7 +560,9 @@ export default function AssessmentsPage() {
       setIsLoading(false);
       return;
     }
-    fetch(`${API}/api/v1/assessments`, {
+    // The list is class-scoped too. Sending no class_id is what made the same
+    // assessments — and the same selected one — appear under every class.
+    fetch(`${API}${withClass("/api/v1/assessments")}`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then(async (r) => {
@@ -401,11 +653,48 @@ export default function AssessmentsPage() {
           </div>
         )}
 
+        {/* ── View switch ───────────────────────────────────── */}
+        {!isLoading && !error && assessments.length > 0 && (
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex gap-2">
+              {[{ v: "test", l: "By test" }, { v: "student", l: "By student" }].map((o) => {
+                const on = view === o.v;
+                return (
+                  <button key={o.v} onClick={() => setView(o.v)}
+                    className="text-xs font-semibold px-3 py-1.5 rounded-lg cursor-pointer transition-all"
+                    style={{
+                      background: on ? "#EEF2FF" : "#FFFFFF",
+                      color:      on ? "#6366F1" : "#64748B",
+                      border:     `1px solid ${on ? "#C7D2FE" : "#E2E8F0"}`,
+                    }}>
+                    {o.l}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* The month only narrows the student-wise view; the test list is
+                already date-ordered and short enough to scan. */}
+            {view === "student" && (
+              <label className="flex items-center gap-2 text-xs" style={{ color: "#94A3B8" }}>
+                Month
+                <select value={month} onChange={(e) => setMonth(e.target.value)}
+                  className="text-xs font-semibold px-2.5 py-1.5 rounded-lg cursor-pointer outline-none"
+                  style={{ background: "#FFFFFF", color: "#0F172A", border: "1px solid #E2E8F0" }}>
+                  {recentMonths().map((m) => (
+                    <option key={m} value={m}>{monthLabel(m)}</option>
+                  ))}
+                </select>
+              </label>
+            )}
+          </div>
+        )}
+
         {/* ── Filters Row ───────────────────────────────────── */}
         {!isLoading && !error && assessments.length > 0 && (
           <div className="flex flex-col gap-3">
             {/* Type filter chips */}
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-2" style={{ display: view === "student" ? "none" : undefined }}>
               {[
                 { value: "all",        label: "All Types",   color: "#64748B", bg: "#F1F5F9" },
                 { value: "quiz",       label: "Quiz",        color: TYPE_CONFIG.quiz.color,       bg: TYPE_CONFIG.quiz.bg },
@@ -456,8 +745,117 @@ export default function AssessmentsPage() {
           </div>
         )}
 
+        {/* ── Student-wise view ─────────────────────────────── */}
+        {view === "student" && (
+          !monthReady ? (
+            <div className="bg-white rounded-2xl p-12 text-center" style={{ border: "1px solid rgba(99,102,241,0.08)" }}>
+              <div className="w-8 h-8 rounded-full ai-gradient mx-auto mb-3 animate-pulse" />
+              <p className="text-sm" style={{ color: "#94A3B8" }}>Loading {monthLabel(month)}…</p>
+            </div>
+          ) : monthlyError ? (
+            <div className="bg-white rounded-2xl p-8 text-center" style={{ border: "1px solid #FCA5A5" }}>
+              <p className="text-sm" style={{ color: "#EF4444" }}>{monthlyError}</p>
+            </div>
+          ) : (monthlyData?.assessments?.length ?? 0) === 0 ? (
+            <div className="bg-white rounded-2xl p-12 text-center" style={{ border: "1px solid rgba(99,102,241,0.1)" }}>
+              <p className="text-base font-semibold mb-1" style={{ color: "#0F172A" }}>
+                No tests in {monthLabel(month)}
+              </p>
+              <p className="text-sm" style={{ color: "#94A3B8" }}>
+                {subjectFilter === "all" ? "Try another month." : `No ${subjectFilter} tests this month. Try another month or subject.`}
+              </p>
+            </div>
+          ) : (
+            <div className="bg-white rounded-2xl overflow-hidden" style={{ border: "1px solid rgba(99,102,241,0.08)" }}>
+              <div className="px-5 py-3 flex flex-wrap items-baseline gap-2" style={{ borderBottom: "1px solid rgba(99,102,241,0.1)" }}>
+                <span className="text-sm font-bold" style={{ color: "#0F172A" }}>
+                  {subjectFilter === "all" ? "All subjects" : subjectFilter} · {monthLabel(month)}
+                </span>
+                <span className="text-xs" style={{ color: "#94A3B8" }}>
+                  {monthlyData.assessments.length} {monthlyData.assessments.length === 1 ? "test" : "tests"} ·
+                  {" "}{monthlyData.students.length} students · click a test to edit its marks
+                </span>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm" style={{ minWidth: 640 }}>
+                  <thead style={{ background: "linear-gradient(135deg,#EEF2FF,#F5F3FF)", borderBottom: "1px solid rgba(99,102,241,0.1)" }}>
+                    <tr>
+                      <th className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest" style={{ color: "#6366F1" }}>Roll</th>
+                      <th className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest" style={{ color: "#6366F1" }}>Student</th>
+                      {monthlyData.assessments.map((a) => (
+                        <th key={a.assessment_id}
+                          onClick={() => setSelected(a)}
+                          title={`${a.title} — click to view and edit marks`}
+                          className="px-3 py-3 text-center text-[10px] font-bold uppercase tracking-widest cursor-pointer"
+                          style={{ color: "#6366F1" }}>
+                          <div className="truncate" style={{ maxWidth: 110 }}>{a.title}</div>
+                          <div className="font-medium normal-case" style={{ color: "#94A3B8" }}>
+                            {formatDate(a.assessment_date)} · /{a.max_marks}
+                          </div>
+                        </th>
+                      ))}
+                      <th className="px-4 py-3 text-right text-[10px] font-bold uppercase tracking-widest" style={{ color: "#6366F1" }}>Total</th>
+                      <th className="px-4 py-3 text-right text-[10px] font-bold uppercase tracking-widest" style={{ color: "#6366F1" }}>%</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {monthlyData.students.map((s) => {
+                      const cellFor = (id) => s.marks.find((m) => m.assessment_id === id);
+                      const grade = getGrade(s.percentage);
+                      const gs = GRADE_STYLE[grade];
+                      return (
+                        <tr key={s.student_id} style={{ borderBottom: "1px solid #F1F5F9" }}>
+                          <td className="px-4 py-2.5 font-mono text-xs" style={{ color: "#94A3B8" }}>{s.roll_number}</td>
+                          <td className="px-4 py-2.5 font-medium" style={{ color: "#0F172A" }}>{s.name}</td>
+                          {monthlyData.assessments.map((a) => {
+                            const c = cellFor(a.assessment_id);
+                            return (
+                              <td key={a.assessment_id} className="px-3 py-2.5 text-center"
+                                style={{ fontVariantNumeric: "tabular-nums" }}>
+                                {!c ? (
+                                  <span style={{ color: "#E2E8F0" }}>—</span>
+                                ) : c.is_absent ? (
+                                  <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full"
+                                    style={{ background: "#FEF2F2", color: "#EF4444" }}>Abs</span>
+                                ) : c.marks_obtained === null || c.marks_obtained === undefined ? (
+                                  <span className="text-xs" style={{ color: "#CBD5E1" }}>not entered</span>
+                                ) : (
+                                  <span className="font-semibold" style={{ color: "#0F172A" }}>{c.marks_obtained}</span>
+                                )}
+                              </td>
+                            );
+                          })}
+                          <td className="px-4 py-2.5 text-right font-semibold" style={{ color: "#0F172A", fontVariantNumeric: "tabular-nums" }}>
+                            {s.total === null || s.total === undefined ? "—" : `${s.total} / ${s.max_total}`}
+                          </td>
+                          <td className="px-4 py-2.5 text-right">
+                            {s.percentage === null || s.percentage === undefined ? (
+                              <span style={{ color: "#CBD5E1" }}>—</span>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded-full text-xs font-bold"
+                                style={{ background: gs.bg, color: gs.color }}>{s.percentage}%</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* A student absent for one of four tests is scored out of the
+                  three they sat, not all four — otherwise a day off reads as a
+                  collapse in performance. */}
+              <p className="px-5 py-3 text-xs" style={{ color: "#94A3B8", borderTop: "1px solid #F1F5F9" }}>
+                Totals count only the tests a student sat. Absences and marks not yet entered are excluded.
+              </p>
+            </div>
+          )
+        )}
+
         {/* ── Cards ─────────────────────────────────────────── */}
-        {isLoading ? (
+        {view === "test" && (isLoading ? (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {[1,2,3].map(i => (
               <div key={i} className="bg-white rounded-2xl p-5" style={{ border: "1px solid #E2E8F0" }}>
@@ -562,10 +960,26 @@ export default function AssessmentsPage() {
               );
             })}
           </div>
-        )}
+        ))}
       </div>
 
-      {selected && <ResultDrawer assessment={selected} onClose={() => setSelected(null)} />}
+      {selected && (
+        <ResultDrawer
+          assessment={selected}
+          onClose={() => setSelected(null)}
+          // A correction changes the submitted count and the class average, so
+          // the card behind the drawer is patched from the same response
+          // rather than left showing the pre-correction figures until reload.
+          onSaved={(updated) => {
+            setAssessments((list) =>
+              list.map((a) =>
+                a.assessment_id === updated.assessment_id ? { ...a, ...updated } : a
+              )
+            );
+            setSelected((s) => (s ? { ...s, ...updated } : s));
+          }}
+        />
+      )}
     </>
   );
 }
