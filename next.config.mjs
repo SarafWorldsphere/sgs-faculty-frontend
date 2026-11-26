@@ -7,6 +7,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const nextConfig = {
   output: "standalone",
   basePath: process.env.NODE_ENV === "production" ? "/faculty" : "",
+  // The kit ships TypeScript source rather than a built bundle, so Next has to
+  // compile it along with our own code.
+  transpilePackages: ["@saraswati/tenant-kit"],
   turbopack: {
     root: __dirname,
   },

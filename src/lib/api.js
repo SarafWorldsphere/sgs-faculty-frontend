@@ -11,8 +11,17 @@
 
 import { clearActiveClass, withClass } from "@/lib/activeClass";
 
+// Every path below already begins with /api/v1, so this is the *origin* the
+// backend sits on — nothing more. A deployment that serves the API from the
+// same domain (nginx proxying /api/v1) wants this empty, which makes the calls
+// relative and correct on whatever host the app is served from.
+//
+// ?? and not ||: an empty string is a deliberate "same origin", and || treats
+// it as missing and falls back to localhost. Setting the variable to /api/v1
+// to express the same intent is what broke the demo box — the path was then
+// added twice and every call 404'd as /api/v1/api/v1/...
 const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
+  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
 // Where to send the user once their session ends — the login app.
 // Comes from the environment so each deployment points at its own login app.
