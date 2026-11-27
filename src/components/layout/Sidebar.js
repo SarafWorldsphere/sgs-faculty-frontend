@@ -121,7 +121,10 @@ const navItems = [
       </svg>
     ),
   },
-  /* Auto Correct — hidden from the menu (page & route kept intact; re-enable by uncommenting)
+  // Hidden from the menu on 2026-07-17 because the screen had nowhere to send
+  // a scan: the backend had no /corrections/scan route, so the upload could
+  // only ever fail. That route exists now and forwards to the AI service's
+  // /api/faculty/auto-correct/scan, so the entry is back.
   {
     label: "Auto Correct",
     href: "/dashboard/auto-correct",
@@ -132,7 +135,6 @@ const navItems = [
       </svg>
     ),
   },
-  */
   {
     label: "Translator",
     href: "/dashboard/translator",
