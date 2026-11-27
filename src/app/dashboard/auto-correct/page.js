@@ -18,6 +18,17 @@ const GRADE_STYLE = {
   "D":  { color: "#EF4444", bg: "#FEF2F2" },
 };
 
+/* What the paper was. The value is what `assessments.assessment_type` stores,
+   so these four are the enum the backend accepts and not a free list. It does
+   not change how the AI marks — the scanner is never told — it decides how the
+   result is filed and grouped in the headmaster's reports. */
+const TEST_TYPES = [
+  { value: "test",       label: "Class Test" },
+  { value: "quiz",       label: "Quiz" },
+  { value: "exam",       label: "Exam" },
+  { value: "assignment", label: "Assignment" },
+];
+
 function getGrade(pct) {
   if (pct >= 90) return "A+";
   if (pct >= 75) return "A";
@@ -28,7 +39,15 @@ function getGrade(pct) {
 
 export default function AutoCorrectPage() {
   const [step,          setStep]          = useState(1); // 1=setup, 2=answers, 3=results
-  const [selectedTopic, setSelectedTopic] = useState("");
+  /* Subject and chapter are held as ids, not names.
+     The chapter select used to carry the chapter *title* as its value, and
+     that title was then sent to the AI as the subject — so a paper on
+     "Photosynthesis" was marked with no idea it was Biology. Holding the id
+     lets the rest of the screen read the subject, the chapter name and the
+     class off the chapter row itself. */
+  const [selectedSubject, setSelectedSubject] = useState("");
+  const [selectedChapter, setSelectedChapter] = useState("");
+  const [testType,        setTestType]        = useState("test");
   const [answers,       setAnswers]       = useState({});
   const [studentMode,   setStudentMode]   = useState("class");
   const [selectedStudent, setSelectedStudent] = useState("");
@@ -37,6 +56,12 @@ export default function AutoCorrectPage() {
   const [students,      setStudents]      = useState([]);
   const [topics,        setTopics]        = useState([]);
   const [questions,     setQuestions]     = useState([]);   // extracted from an uploaded PDF
+  /* The question paper PDF itself, kept after extraction.
+     /questions/extract reads text, so a scanned or photographed paper comes
+     back with nothing. The scanner can read one, so the file is held here and
+     sent along with the answer sheets — it is also what lets the marker match
+     "Section B, 1" on the sheet to question 3 on the paper. */
+  const [paperFile,     setPaperFile]     = useState(null);
   const [uploading,     setUploading]     = useState(false);
   const [uploadError,   setUploadError]   = useState("");
   const [saving,        setSaving]        = useState(false);
@@ -70,6 +95,9 @@ export default function AutoCorrectPage() {
     if (!file) return;
     setUploading(true);
     setUploadError("");
+    // Kept whatever the text extractor makes of it. A scanned paper yields no
+    // questions here but is still the reference the scanner needs.
+    setPaperFile(file);
     const token = getToken();
     try {
       const fd = new FormData();
@@ -83,7 +111,14 @@ export default function AutoCorrectPage() {
       if (!res.ok) throw new Error(data?.detail || `HTTP ${res.status}`);
       if (!data.questions?.length) {
         setQuestions([]);
-        setUploadError("No questions found in that PDF. Try a text-based (not scanned) paper.");
+        // Not a dead end any more: the paper is still sent with the answer
+        // sheets, and the scanner reads a scanned one. Only the on-screen
+        // question list is lost, so the message says what that costs.
+        setUploadError(
+          "No text could be read from that PDF, so the questions can't be " +
+          "listed here — it looks like a scan. The paper will still be sent " +
+          "with the answer sheets for the scanner to read."
+        );
       } else {
         setQuestions(data.questions);
       }
@@ -103,7 +138,22 @@ export default function AutoCorrectPage() {
      an earlier draft read `transcription` and `detected_name` at the top level
      and would have shown a paper of empty answers, which looks like an OCR
      failure rather than the mapping mistake it is. */
-  const scanRowId = (row, i) => String(row?.question_number ?? i + 1);
+  /**
+   * Stable keys for the rows the scanner returned.
+   *
+   * question_number is the paper's own numbering, which is what the teacher
+   * reads, so it is used when it can be. But a handwritten sheet often
+   * restarts the count in each section — "Section B, 1, 2" are questions 3
+   * and 4 — and if the scanner echoes that, several rows arrive numbered "1".
+   * Keying on it then would file three different answers under one id and
+   * silently drop two of them. Position is used instead the moment the
+   * numbers are not unique.
+   */
+  const scanRowIds = (rows) => {
+    const given = rows.map((row, i) => String(row?.question_number ?? i + 1));
+    const unique = new Set(given).size === given.length;
+    return unique ? given : rows.map((_, i) => String(i + 1));
+  };
 
   /**
    * Read the paper, then let the teacher check it.
@@ -128,11 +178,25 @@ export default function AutoCorrectPage() {
       const fd = new FormData();
       sheets.forEach(file => fd.append("answer_sheets", file));
       fd.append("mode", scanMode);
+      // Both, when both exist. The JSON carries the wording and the marks the
+      // teacher reviewed on screen; the file carries everything the extractor
+      // could not read — the layout, the section numbering, and the answer
+      // key printed under the paper.
+      if (paperFile) fd.append("question_paper_file", paperFile);
       if (questions.length) {
         fd.append("question_paper_json", JSON.stringify(questions));
         fd.append("max_marks", String(totalMarks));
       }
-      if (selectedTopic) fd.append("subject", selectedTopic);
+      /* The scanner marks an answer against the subject and the class level.
+         Without them it reads the handwriting and judges the content on the
+         question wording alone, which is how a two-line answer that is right
+         for Class 6 gets full marks on a Class 10 paper.
+
+         The chapter name is deliberately not sent as rubric_or_answer_key:
+         that field is read as the marking key, and a chapter title there
+         would be treated as the expected answer. */
+      if (subjectName) fd.append("subject", subjectName);
+      if (classLevel)  fd.append("class_level", classLevel);
       const student = students.find(s => String(s.student_id) === String(selectedStudent));
       if (student) {
         fd.append("student_name", student.full_name || "");
@@ -145,8 +209,16 @@ export default function AutoCorrectPage() {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
         body: fd,
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.detail || `HTTP ${res.status}`);
+      const body = await res.json();
+      if (!res.ok) throw new Error(body?.detail || `HTTP ${res.status}`);
+
+      /* The AI service wraps its whole answer in `evaluation`. The backend
+         unwraps it, but this reads either shape: the two deploy separately,
+         and the one thing worse than the wrapper is the wrapper coming back
+         on a day only one side has been updated. */
+      const data = (body && typeof body.evaluation === "object" && body.evaluation)
+        ? body.evaluation
+        : body;
 
       const rows = Array.isArray(data?.questions) ? data.questions : [];
       if (!rows.length) {
@@ -156,11 +228,13 @@ export default function AutoCorrectPage() {
 
       // An uploaded question paper is the authority on wording and marks. Only
       // when there is none do the rows come from what the scanner matched.
+      const rowIds = scanRowIds(rows);
+
       if (!questions.length) {
         setQuestions(rows.map((row, i) => {
           const marks = Number(row.max_marks) || 1;
           return {
-            id: scanRowId(row, i),
+            id: rowIds[i],
             question: row.question_text || `Question ${i + 1}`,
             maxMarks: marks,
             type: marks > 3 ? "long" : "short",
@@ -172,7 +246,7 @@ export default function AutoCorrectPage() {
       setAnswers(prev => {
         const next = { ...prev };
         rows.forEach((row, i) => {
-          const id = scanRowId(row, i);
+          const id = rowIds[i];
           if (row.transcribed_answer != null) next[id] = String(row.transcribed_answer);
           marked[id] = {
             marks: Number(row.ai_evaluated_marks) || 0,
@@ -226,6 +300,52 @@ export default function AutoCorrectPage() {
 
   const totalMarks = questions.reduce((s, q) => s + q.maxMarks, 0);
 
+  /* The subject list is built from the chapters rather than fetched from
+     /subjects. A subject with no chapters loaded would be a dead option here:
+     picking it could only ever leave the next field empty. */
+  const subjects = [];
+  const seenSubjects = new Set();
+  topics.forEach(t => {
+    if (t.subject_id == null || seenSubjects.has(t.subject_id)) return;
+    seenSubjects.add(t.subject_id);
+    subjects.push({ id: t.subject_id, name: t.subject_name || `Subject ${t.subject_id}` });
+  });
+
+  // Older chapter rows carry no subject at all. Rather than block the screen
+  // behind an empty dropdown, the subject step is skipped for them.
+  const hasSubjects = subjects.length > 0;
+
+  const chaptersForSubject = selectedSubject
+    ? topics.filter(t => String(t.subject_id) === String(selectedSubject))
+    : topics;
+
+  const chapter = topics.find(t => String(t.chapter_id) === String(selectedChapter)) || null;
+  const chapterName = chapter ? (chapter.chapter_name || chapter.content_title || "") : "";
+  const subjectName =
+    chapter?.subject_name ||
+    subjects.find(s => String(s.id) === String(selectedSubject))?.name ||
+    "";
+  /* The class is already chosen in the header, and the chapter list is scoped
+     to it, so the class travels on every chapter row. The AI uses it to judge
+     how much a given answer is worth at that level.
+
+     Read off any chapter in the list, not only the selected one: the chapter
+     is optional here, and a paper covering a whole subject still belongs to a
+     class. */
+  const classLevel =
+    chapter?.class_name || chaptersForSubject[0]?.class_name || topics[0]?.class_name || "";
+
+  const testTypeLabel =
+    TEST_TYPES.find(t => t.value === testType)?.label || "Class Test";
+
+  // Nothing can be marked against the wrong subject, so it gates the scan.
+  const needsSubject = hasSubjects && !selectedSubject;
+
+  // Subject, chapter and test type are stamped on the assessment created by
+  // the first save. Every paper after it joins that same assessment, so
+  // changing them halfway through would silently not apply.
+  const setupLocked = hasAssessment;
+
   /**
    * Keep the result.
    *
@@ -246,7 +366,14 @@ export default function AutoCorrectPage() {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({
-          title: `Auto Correct — ${selectedTopic || "paper"}`,
+          // Reads as a test in the reports, because that is what it is. The
+          // title used to say "Auto Correct", which described how the marks
+          // were produced rather than what was marked.
+          title: `${testTypeLabel} — ${chapterName || subjectName || "paper"}`,
+          // Both were missing, so every corrected paper was stored with no
+          // subject and counted as a class test. Reports group on these.
+          subject: subjectName || null,
+          assessment_type: testType,
           assessment_date: new Date().toISOString().slice(0, 10),
           student_id: Number(selectedStudent),
           marks_obtained: results.total,
@@ -304,7 +431,10 @@ export default function AutoCorrectPage() {
                 question: q.question,
                 studentAnswer: answers[q.id] || "(no answer)",
                 maxMarks: q.maxMarks,
-                rubric: `${selectedTopic} — ${q.type} question`,
+                rubric: [subjectName, chapterName, classLevel]
+                  .filter(Boolean)
+                  .concat(`${q.type} question`)
+                  .join(" — "),
               }),
             });
             const data = await res.json();
@@ -407,16 +537,78 @@ export default function AutoCorrectPage() {
         <div className="bg-white rounded-2xl p-6 space-y-5" style={{ border: "1px solid rgba(99,102,241,0.1)" }}>
           <h2 className="text-base font-bold" style={{ color: "#0F172A" }}>Setup Correction</h2>
 
+          {setupLocked && (
+            <p className="text-xs p-3 rounded-xl" style={{ background: "#F8FAFC", color: "#64748B", border: "1px solid #E2E8F0" }}>
+              Subject, chapter and test type are fixed for this sitting — the
+              papers saved so far all belong to{" "}
+              <span className="font-semibold">{testTypeLabel} — {chapterName || subjectName || "this paper"}</span>.
+              Finish the class, then start a new correction to change them.
+            </p>
+          )}
+
+          {hasSubjects && (
+            <div>
+              <label className="text-xs font-semibold block mb-2" style={{ color: "#64748B" }}>Subject</label>
+              <select value={selectedSubject} disabled={setupLocked}
+                onChange={e => {
+                  setSelectedSubject(e.target.value);
+                  // The chapter in hand belongs to the subject just left.
+                  setSelectedChapter("");
+                }}
+                className="w-full text-sm rounded-xl px-3 py-2.5 outline-none disabled:opacity-60"
+                style={{ border: "1px solid #E2E8F0", color: "#0F172A", background: "#F8FAFC" }}>
+                <option value="">-- Select subject --</option>
+                {subjects.map(s => (
+                  <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
+              </select>
+              <p className="text-xs mt-1.5" style={{ color: "#94A3B8" }}>
+                The marker needs this: the same answer is worth different marks
+                in different subjects.
+                {classLevel ? ` Class is ${classLevel}, from the class you are working in.` : ""}
+              </p>
+            </div>
+          )}
+
           <div>
-            <label className="text-xs font-semibold block mb-2" style={{ color: "#64748B" }}>Topic / Chapter</label>
-            <select value={selectedTopic} onChange={e => setSelectedTopic(e.target.value)}
-              className="w-full text-sm rounded-xl px-3 py-2.5 outline-none"
+            <label className="text-xs font-semibold block mb-2" style={{ color: "#64748B" }}>
+              Topic / Chapter <span className="font-normal" style={{ color: "#94A3B8" }}>— optional</span>
+            </label>
+            <select value={selectedChapter} onChange={e => setSelectedChapter(e.target.value)}
+              disabled={setupLocked || needsSubject}
+              className="w-full text-sm rounded-xl px-3 py-2.5 outline-none disabled:opacity-60"
               style={{ border: "1px solid #E2E8F0", color: "#0F172A", background: "#F8FAFC" }}>
-              <option value="">-- Select topic --</option>
-              {topics.map(t => (
-                <option key={t.chapter_id} value={t.content_title}>{t.content_title}</option>
+              <option value="">
+                {needsSubject ? "-- Choose a subject first --" : "-- Whole subject --"}
+              </option>
+              {chaptersForSubject.map(t => (
+                <option key={t.chapter_id} value={t.chapter_id}>
+                  {t.chapter_name || t.content_title}
+                </option>
               ))}
             </select>
+          </div>
+
+          <div>
+            <label className="text-xs font-semibold block mb-2" style={{ color: "#64748B" }}>Test type</label>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {TEST_TYPES.map(opt => (
+                <button key={opt.value} type="button" disabled={setupLocked}
+                  onClick={() => setTestType(opt.value)}
+                  className="py-2.5 px-2 rounded-xl text-xs font-semibold cursor-pointer transition-all disabled:cursor-not-allowed disabled:opacity-60"
+                  style={{
+                    background: testType === opt.value ? "#EEF2FF" : "#F8FAFC",
+                    border: `1px solid ${testType === opt.value ? "#6366F1" : "#E2E8F0"}`,
+                    color: testType === opt.value ? "#6366F1" : "#64748B",
+                  }}>
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs mt-1.5" style={{ color: "#94A3B8" }}>
+              How the result is filed in the reports. It does not change the
+              marking.
+            </p>
           </div>
 
           <div>
@@ -531,11 +723,17 @@ export default function AutoCorrectPage() {
             </label>
 
             {sheets.length > 0 && (
-              <button onClick={handleScan} disabled={scanning}
+              <button onClick={handleScan} disabled={scanning || needsSubject}
                 className="w-full mt-2.5 py-2.5 rounded-xl text-sm font-semibold text-white cursor-pointer transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 style={{ background: "linear-gradient(135deg,#10B981,#06B6D4)" }}>
                 {scanning ? "Reading the handwriting…" : "Read answer sheet →"}
               </button>
+            )}
+            {sheets.length > 0 && needsSubject && (
+              <p className="text-xs mt-2" style={{ color: "#B45309" }}>
+                Choose the subject above first — the marker needs it to know
+                what it is reading.
+              </p>
             )}
             {scanning && (
               <p className="text-xs mt-2" style={{ color: "#94A3B8" }}>
@@ -545,7 +743,7 @@ export default function AutoCorrectPage() {
             {scanError && <p className="text-xs mt-2" style={{ color: "#EF4444" }}>{scanError}</p>}
           </div>
 
-          <button onClick={() => setStep(2)} disabled={questions.length === 0}
+          <button onClick={() => setStep(2)} disabled={questions.length === 0 || needsSubject}
             className="w-full py-3 rounded-xl text-sm font-semibold text-white cursor-pointer transition-all disabled:opacity-50 disabled:cursor-not-allowed"
             style={{ background: "linear-gradient(135deg,#6366F1,#8B5CF6)" }}>
             Start Entering Answers →
@@ -656,7 +854,11 @@ export default function AutoCorrectPage() {
             <p className="text-3xl font-bold mb-1" style={{ color: "#0F172A", fontFamily: "var(--font-space-grotesk)" }}>
               {results.total} / {results.max}
             </p>
-            <p className="text-sm" style={{ color: "#94A3B8" }}>{results.percentage}% · {selectedTopic}</p>
+            <p className="text-sm" style={{ color: "#94A3B8" }}>
+              {[`${results.percentage}%`, testTypeLabel, subjectName, chapterName]
+                .filter(Boolean)
+                .join(" · ")}
+            </p>
             <div className="mt-4 h-2 rounded-full overflow-hidden" style={{ background: "#EEF2FF" }}>
               <div className="h-full rounded-full transition-all duration-700"
                 style={{ width: `${results.percentage}%`, background: "linear-gradient(90deg,#6366F1,#10B981)" }} />
