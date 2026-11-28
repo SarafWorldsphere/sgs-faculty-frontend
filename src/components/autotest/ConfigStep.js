@@ -20,12 +20,35 @@
 
 import { useEffect, useMemo, useState } from "react";
 import SyllabusPicker from "@/components/autotest/SyllabusPicker";
-import { fetchQuestionTypeCapabilities } from "@/lib/api";
+import { fetchQuestionTypeCapabilities, fetchExamBlueprints } from "@/lib/api";
 import {
   TEST_TYPES, EXAM_PATTERNS, DIFFICULTIES, DEFAULT_MIX, COMPETITIVE_MIX,
   ASSUMED_SUPPORTED, rowsForTestType, blueprintTotal, testTypeById, examTypeFor,
-  questionTypeLabel,
+  questionTypeLabel, applyExamConfig,
 } from "@/lib/testBlueprints";
+
+/**
+ * Load this school's test types and patterns.
+ *
+ * They replace the built-in defaults in testBlueprints, whose exports are
+ * live bindings — so every helper in that module and every other importer
+ * picks them up without being told. The counter returned here exists only to
+ * re-render this screen once they have arrived; a school with nothing
+ * configured, or an unreachable API, simply keeps the defaults.
+ */
+function useExamConfig() {
+  const [revision, setRevision] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    fetchExamBlueprints()
+      .then((config) => {
+        if (alive && applyExamConfig(config)) setRevision((n) => n + 1);
+      })
+      .catch(() => { /* defaults stand */ });
+    return () => { alive = false; };
+  }, []);
+  return revision;
+}
 
 /**
  * Which question types the AI service can write today.
@@ -81,6 +104,8 @@ const EMPTY_SYLLABUS = {
 
 export default function ConfigStep({ onGenerate, onSaveBlueprint, initial, syllabus: board = "State" }) {
   const supported = useSupportedTypes();
+  // Re-renders once this school's own test types have loaded.
+  useExamConfig();
 
   const [testType, setTestType] = useState(initial?.testType ?? "pt");
   const [examNo,   setExamNo]   = useState(initial?.examNo ?? "PT-1");

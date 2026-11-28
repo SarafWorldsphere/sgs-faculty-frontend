@@ -11,13 +11,6 @@ export default function Header({ onMenuToggle }) {
   const { user, classes, activeClass } = useAuth();
   const router = useRouter();
 
-  /* A teacher can take more than one subject in the same class, so join them
-     rather than picking one. Falls back to the teacher record for anyone with
-     no class map rows, which is how it behaved before. */
-  const subjectLabel =
-    (activeClass?.subjects?.length ? activeClass.subjects.join(", ") : null) ||
-    user?.subject ||
-    null;
   const [notices, setNotices] = useState([]);
   // The bell used to show a permanent red dot whenever any announcement
   // existed. It now counts announcements newer than the last time this
@@ -97,12 +90,10 @@ export default function Header({ onMenuToggle }) {
                 more than one class, and this chip sits beside the class
                 selector — showing the primary subject next to a different
                 class is what made marks go in under the wrong subject. */}
-            {subjectLabel && (
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold" style={{ background: "#EEF2FF", color: "#6366F1" }}>
-                <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse" />
-                {subjectLabel}
-              </span>
-            )}
+            {/* The subject chip was removed — it listed every subject the
+                teacher takes in this class, which on a five-subject teacher
+                filled the bar and told them nothing they did not know. The
+                subject that matters is chosen per screen. */}
             {/* A teacher with several classes picks one here; everyone else sees
                 the same static chip as before. */}
             {(classes?.length ?? 0) > 1 ? (

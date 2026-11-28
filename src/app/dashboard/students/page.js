@@ -222,7 +222,9 @@ function NotifyModal({ student, onClose }) {
 }
 
 /* ─── Assign Homework Modal — single OR bulk ──────────────────────── */
-function AssignModal({ students: initialStudents, onClose, onSuccess }) {
+// classSize is the whole roll, used only to say how many "entire class"
+// actually means. The selected students still come in via `students`.
+function AssignModal({ students: initialStudents, onClose, onSuccess, classSize = 0 }) {
   // Snapshot the list on open. onSuccess clears the parent's selection while
   // this modal is still showing its "done" view, and that view names the
   // students — reading the live prop after the clear crashed the page with
@@ -372,7 +374,9 @@ function AssignModal({ students: initialStudents, onClose, onSuccess }) {
               <p className="text-sm" style={{ color: "#94A3B8" }}>
                 <span className="font-semibold" style={{ color: "#6366F1" }}>{title}</span> assigned to{" "}
                 <span className="font-semibold">
-                  {entireClass ? "the whole class" : isBulk ? `${students.length} students` : (students[0]?.full_name ?? "the student")}
+                  {entireClass
+                    ? (classSize ? `the whole class (${classSize} students)` : "the whole class")
+                    : isBulk ? `${students.length} students` : (students[0]?.full_name ?? "the student")}
                 </span>
               </p>
               <p className="text-xs mt-1" style={{ color: "#94A3B8" }}>
@@ -415,7 +419,17 @@ function AssignModal({ students: initialStudents, onClose, onSuccess }) {
                 style={{ background: "#F8FAFC", border: "1px solid #E2E8F0", maxHeight: "140px", overflowY: "auto" }}>
                 <div className="flex items-center justify-between mb-2">
                   <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: "#94A3B8" }}>
-                    {entireClass ? "Recipients: entire class" : `Recipients (${students.length})`}
+                    {/*
+                      The count follows the choice. Ticking "entire class"
+                      used to leave the number showing however many were
+                      selected beforehand, so a teacher who picked three
+                      students and then chose the whole class still read
+                      "Recipients (3)" while 40 were about to be assigned.
+                      classSize is the roll the screen is showing.
+                    */}
+                    {entireClass
+                      ? `Recipients: entire class${classSize ? ` (${classSize})` : ""}`
+                      : `Recipients (${students.length})`}
                   </p>
                   <label className="flex items-center gap-1.5 text-[11px] font-medium cursor-pointer select-none" style={{ color: "#475569" }}>
                     <input type="checkbox" checked={entireClass} onChange={e => setEntireClass(e.target.checked)}
@@ -500,7 +514,16 @@ function AssignModal({ students: initialStudents, onClose, onSuccess }) {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold mb-1.5" style={{ color: "#475569" }}>Description (optional)</label>
+                  {/*
+                    Not "optional". Either instructions or an attachment has
+                    to be there — see missingWork — and labelling this
+                    optional sent teachers to a Assign button that stayed
+                    disabled with nothing saying why. The requirement is a
+                    pair, so the label says which half satisfies it.
+                  */}
+                  <label className="block text-xs font-semibold mb-1.5" style={{ color: "#475569" }}>
+                    Description {attachment ? "(optional — a file is attached)" : "(or attach a file below)"}
+                  </label>
                   <textarea
                     value={desc}
                     onChange={e => setDesc(e.target.value)}
@@ -1055,15 +1078,26 @@ export default function StudentsPage() {
         <NotifyModal student={notifyStudent} onClose={() => setNotifyStudent(null)} />
       )}
       {assignStudent && (
-        <AssignModal students={[assignStudent]} onClose={() => setAssignStudent(null)} />
+        <AssignModal students={[assignStudent]} classSize={students.length} onClose={() => setAssignStudent(null)} />
       )}
       {bulkAssignOpen && (
         <AssignModal
           students={students.filter(s => selectedIds.has(s.student_id))}
+          classSize={students.length}
           onClose={() => setBulkAssignOpen(false)}
           onSuccess={() => clearSelection()}
         />
       )}
+
+      {/*
+        Room for the floating bar below.
+
+        It is position:fixed, so it takes no space in the flow and sat on top
+        of the pagination controls — on a phone the two occupy the same strip
+        of screen, and a teacher could not reach "Next" while anything was
+        selected. This reserves the height only while the bar is showing.
+      */}
+      {selectedIds.size > 0 && <div aria-hidden className="h-24 sm:h-20" />}
 
       {/* ── Floating selection bar ── */}
       {selectedIds.size > 0 && (
@@ -1078,6 +1112,34 @@ export default function StudentsPage() {
               student{selectedIds.size === 1 ? "" : "s"} selected
             </span>
           </div>
+
+          {/*
+            Selecting beyond the current page.
+
+            The header checkbox covers this page only, on purpose — see the
+            comment on it. But a teacher assigning to a whole year then had
+            to visit every page and tick each one, which is what made this
+            unusable on a phone.
+
+            So the page-wide tick is kept, and reaching across pages becomes
+            a separate, named action that states the number. Nothing is
+            selected out of sight without the teacher reading how many.
+          */}
+          {visible.length > 0
+            && visible.every(s => selectedIds.has(s.student_id))
+            && filtered.length > selectedIds.size && (
+            <>
+              <div className="w-px h-6" style={{ background: "rgba(255,255,255,0.15)" }} />
+              <button
+                onClick={() => setSelectedIds(new Set(filtered.map(s => s.student_id)))}
+                className="text-xs font-semibold cursor-pointer transition-all whitespace-nowrap"
+                style={{ color: "#A5B4FC" }}
+                onMouseEnter={e => e.currentTarget.style.color = "white"}
+                onMouseLeave={e => e.currentTarget.style.color = "#A5B4FC"}>
+                Select all {filtered.length}
+              </button>
+            </>
+          )}
           <div className="w-px h-6" style={{ background: "rgba(255,255,255,0.15)" }} />
           <button onClick={clearSelection}
             className="text-xs font-semibold cursor-pointer transition-all"

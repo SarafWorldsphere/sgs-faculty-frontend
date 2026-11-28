@@ -539,3 +539,24 @@ export async function fetchMonthlyMarks(month, subject) {
   if (subject && subject !== "all") qs.set("subject", subject);
   return request(withClass(`/api/v1/assessments/monthly?${qs.toString()}`));
 }
+
+/**
+ * This school's test types and competitive patterns.
+ *
+ * These used to be constants in the bundle, identical for every tenant.
+ * They now come from the backend so a school can set its own marks totals
+ * and question mixes.
+ *
+ * Resolves null rather than throwing: the Auto Test screen falls back to the
+ * built-in defaults, which is better than a Configure step that will not
+ * draw because a lookup failed.
+ */
+export async function fetchExamBlueprints() {
+  try {
+    const data = await request("/api/v1/exam-blueprints");
+    if (!data || !Array.isArray(data.testTypes) || data.testTypes.length === 0) return null;
+    return { testTypes: data.testTypes, examPatterns: data.examPatterns ?? [] };
+  } catch {
+    return null;
+  }
+}

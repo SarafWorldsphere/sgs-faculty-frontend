@@ -46,7 +46,13 @@ export const SECTION_ORDER = ["mcq", "fill", "truefalse", "oneword", "match", "s
  * paper quietly came out at 14 instead of 12.5. Stating both removes the
  * arithmetic, and every default below adds up exactly.
  */
-export const TEST_TYPES = [
+// `let`, not `const`: these are the built-in defaults, and applyExamConfig
+// below replaces them with the school's own once the API has answered. ES
+// module bindings are live, so every file importing TEST_TYPES or
+// EXAM_PATTERNS — and every helper in this file — sees the replacement with
+// no further wiring. The defaults remain the fallback for a school that has
+// configured nothing, and for the first render before the fetch returns.
+export let TEST_TYPES = [
   {
     id: "weekly",
     label: "Weekly test",
@@ -106,7 +112,7 @@ export const TEST_TYPES = [
 ];
 
 /** Patterns that only fill in the numbers; nothing here is locked. */
-export const EXAM_PATTERNS = [
+export let EXAM_PATTERNS = [
   { id: "ntse",    label: "NTSE — stage 1 practice", target: "NTSE",    questions: 50, marks: 1, minutes: 45 },
   { id: "nmms",    label: "NMMS practice",           target: "NMMS",    questions: 45, marks: 1, minutes: 45 },
   { id: "science", label: "Science olympiad",        target: "Science", questions: 35, marks: 1, minutes: 60 },
@@ -199,4 +205,33 @@ export function groupIntoSections(questions = []) {
     };
     return section;
   });
+}
+
+/**
+ * Replace the built-in test types and patterns with this school's own.
+ *
+ * The Auto Test screen used to be fixed at build time: every tenant got the
+ * same five test types and the same marks totals, and a school wanting a
+ * 15-mark class test needed a code change. They now come from
+ * GET /api/v1/exam-blueprints, which is scoped to the school making the
+ * request, so SGS and SSS can differ.
+ *
+ * Called once, early, by the screen that needs them. A school with nothing
+ * configured — or an API that is unreachable — leaves the defaults above in
+ * place, so the screen always has something to draw.
+ *
+ * Returns true when something was actually replaced, which the caller uses
+ * to re-render.
+ */
+export function applyExamConfig(config) {
+  let changed = false;
+  if (Array.isArray(config?.testTypes) && config.testTypes.length) {
+    TEST_TYPES = config.testTypes;
+    changed = true;
+  }
+  if (Array.isArray(config?.examPatterns) && config.examPatterns.length) {
+    EXAM_PATTERNS = config.examPatterns;
+    changed = true;
+  }
+  return changed;
 }
