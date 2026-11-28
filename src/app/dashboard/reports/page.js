@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import Pagination from "@/components/ui/Pagination";
 import { withClass } from "@/lib/activeClass";
+import ActiveClassTag from "@/components/layout/ActiveClassTag";
 
 const API = process.env.NEXT_PUBLIC_API_BASE_URL;
 
@@ -353,6 +354,7 @@ export default function ReportsPage() {
             </svg>
           </div>
           <h1 className="text-2xl font-bold" style={{ color: "#F1F5F9", fontFamily: "var(--font-space-grotesk)" }}>Reports</h1>
+            <ActiveClassTag />
         </div>
         <div className="flex items-center justify-between pl-10">
           <p className="text-sm" style={{ color: "#94A3B8" }}>

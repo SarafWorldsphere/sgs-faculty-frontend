@@ -12,6 +12,7 @@
 import { useState, useEffect } from "react";
 import ChaptersView from "@/components/chapters/ChaptersView";
 import NotesView from "@/components/notes/NotesView";
+import ActiveClassTag from "@/components/layout/ActiveClassTag";
 
 const TABS = [
   { key: "chapters", label: "Chapters" },
@@ -51,6 +52,7 @@ export default function NotesChaptersPage() {
             </svg>
           </div>
           <h1 className="text-2xl font-bold" style={{ color: "#F1F5F9", fontFamily: "var(--font-space-grotesk)" }}>Notes</h1>
+            <ActiveClassTag />
         </div>
         <p className="text-sm pl-10" style={{ color: "#94A3B8" }}>
           Read chapters and manage your notes

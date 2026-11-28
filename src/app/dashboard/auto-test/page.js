@@ -239,9 +239,24 @@ export default function AutoTestPage() {
     }
   };
 
-  const handleSave = async (paper) => {
+  /**
+   * Keep the paper.
+   *
+   * `silent` is set when saving happens as a side effect of printing rather
+   * than because the teacher pressed Save. A generated paper that is printed
+   * and then closed used to be lost — the work was done, the AI call was
+   * paid for, and nothing was recorded. Printing now keeps it too.
+   *
+   * A silent save never interrupts: no error banner if it fails, and it
+   * falls back to the chapter name for a title rather than refusing. The
+   * teacher is on their way to the printer, not filling in a form.
+   */
+  const handleSave = async (paper, { silent = false } = {}) => {
     if (saving || saved) return;
-    if (!paper.title?.trim()) { setError("Give the paper a title before saving."); return; }
+    if (!paper.title?.trim()) {
+      if (!silent) { setError("Give the paper a title before saving."); return; }
+      paper = { ...paper, title: config?.chapterNames?.[0] || config?.subject || "Question paper" };
+    }
     setSaving(true);
     setError("");
     try {
@@ -258,7 +273,9 @@ export default function AutoTestPage() {
       setSaved(stored);
       setSavedKey((k) => k + 1);
     } catch (err) {
-      setError(err.message || "Couldn't save the paper.");
+      // A printed paper is still printed even if keeping a copy failed, so
+      // this must not put an error in front of someone mid-print.
+      if (!silent) setError(err.message || "Couldn't save the paper.");
     } finally {
       setSaving(false);
     }
@@ -357,7 +374,7 @@ export default function AutoTestPage() {
           saving={saving}
           error=""
           onBack={reset}
-          onPrint={(paper, mode) => setPrinting({ paper, mode })}
+          onPrint={(paper, mode) => { handleSave(paper, { silent: true }); setPrinting({ paper, mode }); }}
           onSave={handleSave}
           onQuestionsChange={setQuestions}
           onRegenerate={handleRegenerate}
@@ -366,7 +383,7 @@ export default function AutoTestPage() {
 
       <SavedPapers
         refreshKey={savedKey}
-        onPrint={(paper, mode) => setPrinting({ paper, mode })}
+        onPrint={(paper, mode) => { handleSave(paper, { silent: true }); setPrinting({ paper, mode }); }}
         onUseBlueprint={useBlueprint}
       />
 

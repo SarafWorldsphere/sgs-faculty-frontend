@@ -9,6 +9,7 @@
  */
 
 import { useEffect, useRef, useState } from "react";
+import { useAuth } from "@/context/AuthContext";
 import {
   fetchClasses,
   fetchSubjects,
@@ -67,6 +68,7 @@ function formatDate(value) {
 }
 
 export default function StudyMaterial() {
+  const { activeClassId } = useAuth();
   const [classes, setClasses] = useState([]);
   const [subjects, setSubjects] = useState([]);
   const [chapters, setChapters] = useState([]);
@@ -84,17 +86,30 @@ export default function StudyMaterial() {
   const replaceRef = useRef(null);
   const replaceTarget = useRef(null);
 
-  // Classes on mount — with only one class there is nothing to choose, so
-  // select it straight away (the same applies to subjects below).
+  // Classes on mount.
+  //
+  // The class defaults to the one selected in the header. This panel used to
+  // open on "Select class" while the header already said which class the
+  // teacher was working in — two controls contradicting each other, directly
+  // above a chapter list, which is what made people read this as a filter
+  // rather than as the destination for an upload.
+  //
+  // It stays changeable: uploading to a class you are not currently viewing
+  // is a real case, just not the common one.
   useEffect(() => {
     fetchClasses()
       .then(d => {
         const list = Array.isArray(d) ? d : [];
         setClasses(list);
-        if (list.length === 1) setClassId(String(list[0].class_id));
+        if (list.length === 1) {
+          setClassId(String(list[0].class_id));
+          return;
+        }
+        const active = list.find(c => String(c.class_id) === String(activeClassId));
+        if (active) setClassId(String(active.class_id));
       })
       .catch(() => setClasses([]));
-  }, []);
+  }, [activeClassId]);
 
   // Class -> subjects
   useEffect(() => {

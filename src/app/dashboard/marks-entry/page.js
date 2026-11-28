@@ -16,6 +16,7 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import { withClass } from "@/lib/activeClass";
 import { useAuth } from "@/context/AuthContext";
 import { todayISO } from "@/lib/dates";
+import ActiveClassTag from "@/components/layout/ActiveClassTag";
 
 const API = process.env.NEXT_PUBLIC_API_BASE_URL;
 
@@ -269,6 +270,7 @@ export default function MarksEntryPage() {
         >
           Marks Entry
         </h1>
+            <ActiveClassTag />
         <p className="text-sm mt-0.5" style={{ color: "#94A3B8" }}>
           {user?.class ? `Class ${user.class}` : ""}
           {user?.section ? ` — Section ${user.section}` : ""}

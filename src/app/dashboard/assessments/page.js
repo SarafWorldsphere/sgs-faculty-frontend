@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { fetchMonthlyMarks } from "@/lib/api";
 import { withClass } from "@/lib/activeClass";
+import ActiveClassTag from "@/components/layout/ActiveClassTag";
 
 const API = process.env.NEXT_PUBLIC_API_BASE_URL;
 
@@ -620,6 +621,7 @@ export default function AssessmentsPage() {
               <h1 className="text-2xl font-bold" style={{ color: "#F1F5F9", fontFamily: "var(--font-space-grotesk)" }}>
                 Assessments
               </h1>
+            <ActiveClassTag />
             </div>
             <p className="text-sm pl-10" style={{ color: "#94A3B8" }}>
               <span className="font-semibold" style={{ color: "#6366F1" }}>{assessments.length}</span> assessments · Click any card to view results
