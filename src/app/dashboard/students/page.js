@@ -225,6 +225,7 @@ function NotifyModal({ student, onClose }) {
 // classSize is the whole roll, used only to say how many "entire class"
 // actually means. The selected students still come in via `students`.
 function AssignModal({ students: initialStudents, onClose, onSuccess, classSize = 0 }) {
+  const { activeClassId } = useAuth();
   // Snapshot the list on open. onSuccess clears the parent's selection while
   // this modal is still showing its "done" view, and that view names the
   // students — reading the live prop after the clear crashed the page with
@@ -273,7 +274,7 @@ function AssignModal({ students: initialStudents, onClose, onSuccess, classSize 
         setSubjects(unique);
       })
       .catch(() => setSubjects([]));
-  }, []);
+  }, [activeClassId]);
 
   // Chapters follow the subject. The subject <select> clears the chapter on
   // change (see handleSubjectChange) so a chapter from the previous subject
@@ -774,6 +775,7 @@ function StudentDrawer({ student, perf, onNotify, onAssign, onClose }) {
 
 /* ─── Main Page ────────────────────────────────────────────────────── */
 export default function StudentsPage() {
+  const { activeClassId } = useAuth();
   const { user } = useAuth();
   const [students,      setStudents]      = useState([]);
   const [reportMap,     setReportMap]     = useState({});
@@ -836,7 +838,7 @@ export default function StudentsPage() {
         setError(err?.message || "Unable to load students.");
       })
       .finally(() => setIsLoading(false));
-  }, []);
+  }, [activeClassId]);
 
   const filtered = students.filter(s =>
     (s.full_name || "").toLowerCase().includes(search.toLowerCase()) ||

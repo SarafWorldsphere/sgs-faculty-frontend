@@ -35,9 +35,9 @@ export default function NotesChaptersPage() {
      * The path comes from window.location, not a literal: next.config sets
      * basePath '/faculty', so this page is served at /faculty/dashboard/notes.
      * Writing "/dashboard/notes" here dropped that prefix from the address
-     * bar, and the next full page load — switching class calls
-     * window.location.reload() — asked the server for a path nginx does not
-     * route, which answered 404. */
+     * bar, and the next full page load then asked the server for a path
+     * nginx does not route, which answered 404. Switching class no longer
+     * reloads, but a refresh or a shared link still would. */
     window.history.replaceState(null, "", `${window.location.pathname}?tab=${key}`);
   };
 

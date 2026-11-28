@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo } from "react";
 import { fetchMonthlyMarks } from "@/lib/api";
 import { withClass } from "@/lib/activeClass";
 import ActiveClassTag from "@/components/layout/ActiveClassTag";
+import { useAuth } from "@/context/AuthContext";
 
 const API = process.env.NEXT_PUBLIC_API_BASE_URL;
 
@@ -520,6 +521,7 @@ function ResultDrawer({ assessment, onClose, onSaved }) {
 
 /* ── Main Page ────────────────────────────────────────────────── */
 export default function AssessmentsPage() {
+  const { activeClassId } = useAuth();
   const [assessments,    setAssessments]    = useState([]);
   const [isLoading,      setIsLoading]      = useState(true);
   const [error,          setError]          = useState(null);
@@ -548,7 +550,7 @@ export default function AssessmentsPage() {
         }
       });
     return () => { cancelled = true; };
-  }, [view, month, subjectFilter, monthKey]);
+  }, [view, month, subjectFilter, monthKey, activeClassId]);
 
   const monthReady   = monthly && monthly.forKey === monthKey;
   const monthlyData  = monthReady ? monthly.data : null;
@@ -580,7 +582,7 @@ export default function AssessmentsPage() {
         setError(err?.message || "Unable to load assessments.");
       })
       .finally(() => setIsLoading(false));
-  }, []);
+  }, [activeClassId]);
 
   const formatDate = (d) =>
     d ? new Date(d).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : "—";

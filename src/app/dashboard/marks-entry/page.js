@@ -61,6 +61,7 @@ function Field({ label, children }) {
 }
 
 export default function MarksEntryPage() {
+  const { activeClassId } = useAuth();
   const { user, activeClass } = useAuth();
 
   const [students, setStudents] = useState([]);
@@ -111,7 +112,7 @@ export default function MarksEntryPage() {
       })
       .catch((err) => setLoadError(err?.message || "Unable to load the class."))
       .finally(() => setLoading(false));
-  }, []);
+  }, [activeClassId]);
 
   /* The subjects this teacher takes in the *selected* class.
    *
