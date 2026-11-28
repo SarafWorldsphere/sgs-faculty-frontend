@@ -15,6 +15,7 @@
 import { useEffect, useRef, useState } from "react";
 import { fetchClasses, fetchSubjects, fetchChaptersBySubject } from "@/lib/api";
 import { fetchCoveredTopics } from "@/lib/plannerApi";
+import { useAuth } from "@/context/AuthContext";
 
 const field = {
   border: "1.5px solid #E2E8F0",
@@ -57,6 +58,8 @@ function Select({ label, options, value, onChange, disabled, placeholder, getId,
 }
 
 export default function SyllabusPicker({ onChange, chaptersOptional = false }) {
+  const { activeClassId } = useAuth();
+
   const [classes,  setClasses]  = useState([]);
   const [subjects, setSubjects] = useState([]);
   const [chapters, setChapters] = useState([]);
@@ -65,15 +68,27 @@ export default function SyllabusPicker({ onChange, chaptersOptional = false }) {
   const [subjectId, setSubjectId] = useState("");
   const [picked,    setPicked]    = useState([]);   // chapter ids, in the order chosen
 
+  // Opens on the class chosen in the header rather than on an empty picker.
+  //
+  // Scope is already selected once at the top of the window and applies
+  // everywhere else, so asking again here made the two contradict each
+  // other — the header saying 7th Grade while this said "Select class".
+  // It stays changeable: generating a paper for a class you are not
+  // currently viewing is a real case, just not the usual one.
   useEffect(() => {
     fetchClasses()
       .then((list) => {
         const arr = Array.isArray(list) ? list : [];
         setClasses(arr);
-        if (arr.length === 1) setClassId(String(arr[0].class_id));
+        if (arr.length === 1) {
+          setClassId(String(arr[0].class_id));
+          return;
+        }
+        const active = arr.find((c) => String(c.class_id) === String(activeClassId));
+        if (active) setClassId(String(active.class_id));
       })
       .catch(() => {});
-  }, []);
+  }, [activeClassId]);
 
   useEffect(() => {
     setSubjects([]); setSubjectId("");
