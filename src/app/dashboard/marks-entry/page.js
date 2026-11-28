@@ -419,9 +419,21 @@ export default function MarksEntryPage() {
                     background: e.absent ? "rgba(148,163,184,0.05)" : "transparent",
                   }}
                 >
+                  {/*
+                    minWidth, not a fixed width. At a hard 38px a roll number
+                    longer than two or three characters overflowed its box and
+                    ran into the name beside it — the two read as one string.
+                    A floor keeps the names aligned for the usual short rolls,
+                    and nowrap stops a long one wrapping under itself.
+                  */}
                   <span
                     className="text-xs tabular-nums"
-                    style={{ color: "#64748B", width: 38, flex: "none" }}
+                    style={{
+                      color: "#64748B",
+                      minWidth: 38,
+                      flex: "none",
+                      whiteSpace: "nowrap",
+                    }}
                   >
                     {s.roll_no || "—"}
                   </span>

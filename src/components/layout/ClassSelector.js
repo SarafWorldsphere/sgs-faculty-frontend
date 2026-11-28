@@ -25,6 +25,9 @@ export default function ClassSelector() {
 
   if (!classes || classes.length < 2) return null;
 
+  const primary = classes.filter((o) => o.is_primary);
+  const others  = classes.filter((o) => !o.is_primary);
+
   return (
     <label className="flex items-center gap-1.5">
       <span className="sr-only">Class</span>
@@ -39,12 +42,31 @@ export default function ClassSelector() {
         }}
         title="Switch class"
       >
-        {classes.map((option) => (
-          <option key={option.class_id} value={option.class_id}>
-            {label(option)}
-            {option.is_primary ? " ★" : ""}
-          </option>
-        ))}
+        {/*
+          The teacher's own class is separated into its own group rather
+          than marked with a star.
+
+          This is a native select, so the options are drawn by the operating
+          system: colour and background set on an <option> are ignored by
+          Safari on macOS and by the mobile pickers, which is most of the
+          phones this is used on. An optgroup is honoured everywhere, is
+          read out by screen readers, and says in words what a colour would
+          only imply — which also covers teachers who cannot distinguish it.
+        */}
+        {primary.length > 0 && (
+          <optgroup label="Your class">
+            {primary.map((option) => (
+              <option key={option.class_id} value={option.class_id}>{label(option)}</option>
+            ))}
+          </optgroup>
+        )}
+        {others.length > 0 && (
+          <optgroup label={primary.length ? "Also teaching" : "Classes"}>
+            {others.map((option) => (
+              <option key={option.class_id} value={option.class_id}>{label(option)}</option>
+            ))}
+          </optgroup>
+        )}
       </select>
     </label>
   );

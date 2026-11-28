@@ -14,7 +14,7 @@
  *   canvasImageUrl — base64 PNG (handwritten mode only; swap for S3 URL when backend ready)
  */
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo, Fragment } from "react";
 import { getStroke } from "perfect-freehand";
 import { useNotes } from "@/context/NotesContext";
 import { useToast } from "@/components/ui/Toast";
@@ -105,6 +105,23 @@ export default function NoteForm({ isOpen, onClose, editNote = null, initialChap
   const { addNote, editNote: updateNote, chapters } = useNotes();
   const toast = useToast();
   const isEditing = !!editNote;
+
+  // Chapters arranged under the subject they belong to, for the selector
+  // below. Subjects are listed alphabetically and chapters keep the order
+  // the API sent them, which is chapter number. Anything without a subject
+  // is collected under "" and rendered ungrouped.
+  const chaptersBySubject = useMemo(() => {
+    const groups = new Map();
+    for (const ch of chapters ?? []) {
+      const subject = (typeof ch === "string" ? "" : ch.subject_name) || "";
+      if (!groups.has(subject)) groups.set(subject, []);
+      groups.get(subject).push(ch);
+    }
+    return [...groups.entries()]
+      .map(([subject, items]) => ({ subject, items }))
+      .sort((a, b) => (a.subject === "" ? 1 : b.subject === "" ? -1
+                       : a.subject.localeCompare(b.subject)));
+  }, [chapters]);
 
   // ── Shared form state ──────────────────────────────────────────────────────
   const [title, setTitle]     = useState("");
@@ -407,10 +424,32 @@ export default function NoteForm({ isOpen, onClose, editNote = null, initialChap
                 : "border-border focus:ring-primary/30 focus:border-primary"}`}
           >
             <option value="">Select a chapter...</option>
-            {chapters.map((ch) => {
-              const label = typeof ch === "string" ? ch : (ch.content_title ?? ch.chapter_name ?? String(ch.chapter_id));
-              const key   = typeof ch === "string" ? ch : ch.chapter_id;
-              return <option key={key} value={label}>{label}</option>;
+            {/*
+              Grouped by subject. A teacher taking several subjects in one
+              class saw every chapter in a single flat list with nothing
+              saying which subject each belonged to — "Chapter 3" appearing
+              twice, once for Science and once for Social, was impossible to
+              tell apart. The API already returns subject_name per chapter;
+              it was simply not being shown.
+
+              The option's value stays the chapter title, because that is
+              what a note stores. Only the grouping and the displayed text
+              change, so existing notes keep matching.
+            */}
+            {chaptersBySubject.map(({ subject, items }) => {
+              const options = items.map((ch) => {
+                const label = typeof ch === "string"
+                  ? ch
+                  : (ch.content_title ?? ch.chapter_name ?? String(ch.chapter_id));
+                const key = typeof ch === "string" ? ch : ch.chapter_id;
+                return <option key={key} value={label}>{label}</option>;
+              });
+              // Without a subject there is nothing to group under, so those
+              // chapters stay at the top level rather than under a blank
+              // heading.
+              return subject
+                ? <optgroup key={subject} label={subject}>{options}</optgroup>
+                : <Fragment key="__ungrouped">{options}</Fragment>;
             })}
           </select>
           {errors.chapter && <p className="mt-1 text-xs text-danger">{errors.chapter}</p>}
