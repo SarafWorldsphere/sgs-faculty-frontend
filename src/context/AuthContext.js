@@ -127,16 +127,18 @@ export function AuthProvider({ children }) {
    * Switch the class the teacher is working in.
    *
    * Every page fetches its own data in a mount effect, and the class is read
-   * from storage at request time, so a reload is what makes the whole app —
-   * dashboard, students, reports, assignments — agree on the new class. Doing
-   * it any other way means threading the selection through four pages' effects
-   * and their derived state, for a change a teacher makes a few times a day.
+   * from storage at request time. This used to call window.location.reload()
+   * to make every page agree on the new class, which worked but threw away
+   * whatever was on screen — half-entered marks, an unsent note, a part-filled
+   * assignment — with no warning, and re-ran auth and the bundle each time.
+   *
+   * activeClassId is now a dependency of the pages' load effects instead, so
+   * changing class re-fetches the data and nothing else.
    */
   const switchClass = useCallback((classId) => {
     if (getActiveClass() === Number(classId)) return;
     setActiveClass(classId);
     setActiveClassId(Number(classId));
-    window.location.reload();
   }, []);
 
   // Nothing stored means the primary class, which is what the backend uses

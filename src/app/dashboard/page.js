@@ -31,6 +31,7 @@ function DueLabel({ days }) {
 }
 
 export default function DashboardPage() {
+  const { activeClassId } = useAuth();
   const { user } = useAuth();
   const { notes, totalNotes, isLoading } = useNotes();
   const [assignments, setAssignments] = useState([]);
@@ -55,7 +56,7 @@ export default function DashboardPage() {
         totalStudents: a.total_students,
       }))))
       .catch(() => setAssignments([]));
-  }, []);
+  }, [activeClassId]);
 
   const coveredChapters = [...new Set(notes.map((n) => n.chapter))].length;
   const recentNotes = notes.slice(0, 3);

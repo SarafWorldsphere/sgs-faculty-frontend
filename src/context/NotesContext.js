@@ -21,7 +21,7 @@ import { useAuth } from "@/context/AuthContext";
 const NotesContext = createContext(undefined);
 
 export function NotesProvider({ children }) {
-  const { user, isLoading: authLoading } = useAuth();
+  const { user, isLoading: authLoading, activeClassId } = useAuth();
   const [notes, setNotes] = useState([]);
   const [chapters, setChapters] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -59,7 +59,7 @@ export function NotesProvider({ children }) {
       }
     };
     load();
-  }, [user, authLoading]);
+  }, [user, authLoading, activeClassId]);
 
   /**
    * Add a new note — POST /api/v1/notes

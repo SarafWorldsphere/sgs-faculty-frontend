@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import Pagination from "@/components/ui/Pagination";
 import { withClass } from "@/lib/activeClass";
 import ActiveClassTag from "@/components/layout/ActiveClassTag";
+import { useAuth } from "@/context/AuthContext";
 
 const API = process.env.NEXT_PUBLIC_API_BASE_URL;
 
@@ -256,6 +257,7 @@ const PODIUM_CONFIG = [
 
 /* ── Main page ───────────────────────────────────── */
 export default function ReportsPage() {
+  const { activeClassId } = useAuth();
   const [report,          setReport]          = useState(null);
   const [isLoading,       setIsLoading]       = useState(true);
   const [search,          setSearch]          = useState("");
@@ -310,7 +312,7 @@ export default function ReportsPage() {
         setReport(null);
       })
       .finally(() => setIsLoading(false));
-  }, []);
+  }, [activeClassId]);
 
   const students = report?.students || [];
   const totalAssessments = report?.total_assessments || 0;

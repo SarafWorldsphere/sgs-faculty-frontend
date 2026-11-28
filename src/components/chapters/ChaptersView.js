@@ -12,7 +12,7 @@ import { useAuth } from "@/context/AuthContext";
 import StudyMaterial from "@/components/chapters/StudyMaterial";
 
 export default function ChaptersView() {
-  const { user, isLoading: authLoading } = useAuth();
+  const { user, isLoading: authLoading, activeClassId } = useAuth();
   const [chapters, setChapters] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -35,7 +35,7 @@ export default function ChaptersView() {
       }
     };
     load();
-  }, [user, authLoading]);
+  }, [user, authLoading, activeClassId]);
 
   // The chapter list below the study-material panel, which always stays mounted.
   const renderChapters = () => {
